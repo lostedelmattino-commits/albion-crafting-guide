@@ -6,6 +6,22 @@ const WikiAPI = (() => {
     const API = `${BASE}/api.php`;
     const cache = new Map();
 
+    // Categories that identify non-item pages to exclude from search
+    const EXCLUDED_CATEGORIES = new Set([
+        'Mobs', 'Resource Mob', 'Ability', 'Sword Ability', 'Axe Ability',
+        'Bow Ability', 'Crossbow Ability', 'Dagger Ability', 'Fire Staff Ability',
+        'Frost Staff Ability', 'Holy Staff Ability', 'Nature Staff Ability',
+        'Arcane Staff Ability', 'Hammer Ability', 'Mace Ability', 'Quarterstaff Ability',
+        'Spear Ability', 'Torch Ability', 'Warbow Ability', 'Updated IP'
+    ]);
+
+    // Title patterns to exclude
+    const EXCLUDED_TITLE_PATTERNS = [
+        /Crafting Specialist$/i,
+        / Fighter$/i,
+        /^Category:/i,
+    ];
+
     async function fetchJSON(url) {
         if (cache.has(url)) return cache.get(url);
         const res = await fetch(url);
@@ -16,17 +32,44 @@ const WikiAPI = (() => {
     }
 
     /**
-     * Search items using opensearch API
+     * Search items - returns only items/equipment/mounts (not mobs or abilities)
      * Returns array of {title, url}
      */
     async function search(query) {
         if (!query || query.trim().length < 2) return [];
-        const url = `${API}?action=opensearch&search=${encodeURIComponent(query)}&limit=20&namespace=0&format=json&origin=*`;
+
+        // Use opensearch for fast autocomplete results
+        const url = `${API}?action=opensearch&search=${encodeURIComponent(query)}&limit=25&namespace=0&format=json&origin=*`;
         const data = await fetchJSON(url);
-        // opensearch returns [query, [titles], [descriptions], [urls]]
         const titles = data[1] || [];
         const urls = data[3] || [];
-        return titles.map((title, i) => ({ title, url: urls[i] || '' }));
+
+        // Pre-filter by title pattern (fast, no extra API call needed)
+        const candidates = titles
+            .map((title, i) => ({ title, url: urls[i] || '' }))
+            .filter(r => !EXCLUDED_TITLE_PATTERNS.some(p => p.test(r.title)));
+
+        if (candidates.length === 0) return [];
+
+        // Batch-query categories to filter out mobs and abilities
+        const titlesParam = candidates.map(r => encodeURIComponent(r.title)).join('|');
+        const catUrl = `${API}?action=query&titles=${titlesParam}&prop=categories&cllimit=15&format=json&origin=*`;
+        try {
+            const catData = await fetchJSON(catUrl);
+            const pageCategories = {};
+            Object.values(catData.query.pages).forEach(p => {
+                const cats = (p.categories || []).map(c => c.title.replace('Category:', ''));
+                pageCategories[p.title] = cats;
+            });
+
+            return candidates.filter(r => {
+                const cats = pageCategories[r.title] || [];
+                return !cats.some(c => EXCLUDED_CATEGORIES.has(c));
+            });
+        } catch {
+            // If category check fails, return pre-filtered candidates
+            return candidates;
+        }
     }
 
     /**
@@ -44,20 +87,6 @@ const WikiAPI = (() => {
         };
     }
 
-    /**
-     * Get image URL from wiki
-     */
-    async function getImageUrl(filename) {
-        const url = `${API}?action=query&titles=File:${encodeURIComponent(filename)}&prop=imageinfo&iiprop=url&format=json&origin=*`;
-        const data = await fetchJSON(url);
-        const pages = data.query.pages;
-        const page = Object.values(pages)[0];
-        if (page.imageinfo && page.imageinfo[0]) {
-            return page.imageinfo[0].url;
-        }
-        return null;
-    }
-
     function clearCache() {
         cache.clear();
     }
@@ -66,5 +95,5 @@ const WikiAPI = (() => {
         return `${BASE}/wiki/${encodeURIComponent(pageTitle.replace(/ /g, '_'))}`;
     }
 
-    return { search, getPage, getImageUrl, clearCache, getWikiUrl, BASE };
+    return { search, getPage, clearCache, getWikiUrl, BASE };
 })();

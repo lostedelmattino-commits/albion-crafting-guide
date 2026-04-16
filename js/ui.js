@@ -105,10 +105,23 @@ const UI = (() => {
                 <div id="recipes-container">
                     ${itemData.recipes.map((recipe, i) => renderRecipe(recipe, i)).join('')}
                 </div>
+            ` : itemData.zones.length > 0 ? `
+                <div class="section-title">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+                    </svg>
+                    Dove si trova
+                </div>
+                <div class="zones-card">
+                    <p class="zones-intro">Questa risorsa si raccoglie nelle seguenti zone:</p>
+                    <div class="zones-list">
+                        ${itemData.zones.map(z => `<span class="zone-tag">${escapeHtml(z)}</span>`).join('')}
+                    </div>
+                </div>
             ` : `
                 <div class="no-recipes">
-                    <p>Nessuna ricetta di crafting trovata per questo oggetto.</p>
-                    <p class="hint">Potrebbe essere un materiale base o un drop.</p>
+                    <p>Materiale base — si ottiene raccogliendolo nel mondo o tramite drop.</p>
+                    <a class="wiki-link-inline" href="${WikiAPI.getWikiUrl(title)}" target="_blank" rel="noopener">Vedi la pagina wiki per dettagli →</a>
                 </div>
             `}
 
@@ -209,14 +222,29 @@ const UI = (() => {
         const itemData = await CraftingTree.loadMaterialTree(pageTitle);
 
         if (!itemData || itemData.recipes.length === 0) {
+            const zones = itemData?.zones || [];
+            const zonesHtml = zones.length > 0
+                ? `<div class="zones-section">
+                    <div class="zones-label">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+                        </svg>
+                        Si trova in:
+                    </div>
+                    <div class="zones-list">${zones.map(z => `<span class="zone-tag">${escapeHtml(z)}</span>`).join('')}</div>
+                   </div>`
+                : `<div class="zones-label" style="opacity:0.6">Raccolto, drop, o acquistabile al Market</div>`;
+
             target.innerHTML = `
                 <div class="sub-base-material">
-                    <span class="base-icon">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>
+                    <div class="base-header">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2">
+                            <path d="M12 22V8"/><path d="m5 12-3 3 3 3"/><path d="m19 12 3 3-3 3"/><path d="M2 15h20"/>
                         </svg>
-                    </span>
-                    <strong>${escapeHtml(pageTitle)}</strong> - Materiale base / drop / raccolto
+                        <strong>${escapeHtml(pageTitle)}</strong>
+                        <span class="base-label">Materiale Base</span>
+                    </div>
+                    ${zonesHtml}
                 </div>`;
             return;
         }
