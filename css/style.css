@@ -525,6 +525,53 @@ body {
     border-top: 1px solid var(--border);
 }
 
+/* ===== TIER SELECTOR ===== */
+.tier-selector {
+    margin: 4px 12px 12px;
+    background: var(--bg-card);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    padding: 14px 16px;
+}
+
+.tier-hint {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.tier-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.tier-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s;
+}
+
+.tier-btn:active {
+    background: var(--accent-glow);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.tier-btn-name {
+    font-weight: 500;
+}
+
 /* ===== RELATED ITEMS ===== */
 .related-items {
     display: flex;

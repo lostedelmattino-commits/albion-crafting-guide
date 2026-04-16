@@ -6,19 +6,23 @@ const WikiAPI = (() => {
     const API = `${BASE}/api.php`;
     const cache = new Map();
 
-    // Categories that identify non-item pages to exclude from search
+    // Categories that disqualify a page from being a craftable/obtainable item
     const EXCLUDED_CATEGORIES = new Set([
-        'Mobs', 'Resource Mob', 'Ability', 'Sword Ability', 'Axe Ability',
-        'Bow Ability', 'Crossbow Ability', 'Dagger Ability', 'Fire Staff Ability',
-        'Frost Staff Ability', 'Holy Staff Ability', 'Nature Staff Ability',
-        'Arcane Staff Ability', 'Hammer Ability', 'Mace Ability', 'Quarterstaff Ability',
-        'Spear Ability', 'Torch Ability', 'Warbow Ability', 'Updated IP'
+        'Mobs', 'Resource Mob', 'Ability', 'Disambiguations', 'Crafting',
+        'Furniture', 'Decoration', 'Laborers', 'Trophy',
+        'Sword Ability', 'Axe Ability', 'Bow Ability', 'Crossbow Ability',
+        'Dagger Ability', 'Fire Staff Ability', 'Frost Staff Ability',
+        'Holy Staff Ability', 'Nature Staff Ability', 'Arcane Staff Ability',
+        'Hammer Ability', 'Mace Ability', 'Quarterstaff Ability', 'Spear Ability',
+        'Torch Ability', 'Warbow Ability', 'Updated IP'
     ]);
 
-    // Title patterns to exclude
+    // Title patterns to exclude regardless of category
     const EXCLUDED_TITLE_PATTERNS = [
         /Crafting Specialist$/i,
         / Fighter$/i,
+        / Crafter$/i,
+        /variant table header$/i,
         /^Category:/i,
     ];
 
@@ -64,7 +68,11 @@ const WikiAPI = (() => {
 
             return candidates.filter(r => {
                 const cats = pageCategories[r.title] || [];
-                return !cats.some(c => EXCLUDED_CATEGORIES.has(c));
+                // Reject if no categories at all (wiki infrastructure pages)
+                if (cats.length === 0) return false;
+                // Reject if any excluded category present
+                if (cats.some(c => EXCLUDED_CATEGORIES.has(c))) return false;
+                return true;
             });
         } catch {
             // If category check fails, return pre-filtered candidates

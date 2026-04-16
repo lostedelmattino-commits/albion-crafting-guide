@@ -14,6 +14,7 @@ const CraftingTree = (() => {
             recipes: [],
             image: null,
             zones: [],         // Where to find this (for base resources)
+            tierItems: [],     // Specific tier variants for family pages (e.g. "Bloodmoon Staff")
             relatedItems: []
         };
 
@@ -69,6 +70,30 @@ const CraftingTree = (() => {
                         if (recipe?.materials.length > 0) result.recipes.push(recipe);
                     }
                     el = el.nextElementSibling;
+                }
+            }
+        }
+
+        // Extract tier items from family pages (e.g. "Bloodmoon Staff" → Adept's, Expert's...)
+        // Table 0 with "Item | Tier" header pattern is the tier listing table
+        if (result.recipes.length === 0) {
+            const firstTable = doc.querySelector('table');
+            if (firstTable) {
+                const firstRowText = firstTable.querySelector('tr')?.textContent?.trim() || '';
+                if (firstRowText.includes('Item') && firstRowText.includes('Tier')) {
+                    const TIER_PREFIXES = ["Beginner's", "Novice's", "Journeyman's", "Adept's",
+                        "Expert's", "Master's", "Grandmaster's", "Elder's"];
+                    for (const link of firstTable.querySelectorAll('a[href*="/wiki/"]')) {
+                        const href = link.getAttribute('href') || '';
+                        const title = link.getAttribute('title') || link.textContent.trim();
+                        if (!title || href.includes('Category:') || href.includes('Special:')) continue;
+                        if (TIER_PREFIXES.some(p => title.startsWith(p))) {
+                            const pageTitle = decodeURIComponent(href.replace('/wiki/', '').replace(/_/g, ' '));
+                            if (!result.tierItems.find(t => t.title === pageTitle)) {
+                                result.tierItems.push({ title: pageTitle, name: title });
+                            }
+                        }
+                    }
                 }
             }
         }

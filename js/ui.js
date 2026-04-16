@@ -95,7 +95,25 @@ const UI = (() => {
                 </div>
             </div>
 
-            ${hasRecipes ? `
+            ${itemData.tierItems && itemData.tierItems.length > 0 ? `
+                <div class="section-title">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                    </svg>
+                    Seleziona Tier
+                </div>
+                <div class="tier-selector">
+                    <p class="tier-hint">Questa è la pagina generale. Seleziona un tier specifico per vedere la ricetta:</p>
+                    <div class="tier-list">
+                        ${itemData.tierItems.map(t => `
+                            <button class="tier-btn" data-title="${escapeAttr(t.title)}">
+                                <span class="tier-btn-name">${escapeHtml(t.name)}</span>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : hasRecipes ? `
                 <div class="section-title">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
@@ -150,6 +168,11 @@ const UI = (() => {
                 const targetId = btn.dataset.target;
                 expandMaterial(pageTitle, targetId, btn);
             });
+        });
+
+        // Bind tier selector buttons
+        container.querySelectorAll('.tier-btn').forEach(btn => {
+            btn.addEventListener('click', () => App.loadItem(btn.dataset.title));
         });
 
         // Bind related item clicks
