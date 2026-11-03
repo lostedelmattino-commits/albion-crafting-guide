@@ -16,7 +16,7 @@ const DEFAULTS = {
   expandedWidth: 580,
   expandedHeight: 620,
   opacity: 0.86, // opacità dello sfondo del pannello
-  ghostOpacity: 0.6, // opacità della finestra in modalità fantasma
+  ghostOpacity: 0.7, // opacità della finestra in modalità fantasma
   notesOpenGhost: false, // apri le note direttamente in modalità fantasma
   openPinned: true, // la chat si apre già fissata: resta visibile mentre lavori in un'altra finestra
   autoHideSeconds: 12, // dopo la risposta, quanto resta visibile se non fissata
@@ -46,7 +46,7 @@ const DEFAULTS = {
 };
 
 const PUBLIC_KEYS = Object.keys(DEFAULTS).filter((k) => !k.startsWith('apiKey'));
-const CONFIG_VERSION = 2;
+const CONFIG_VERSION = 3;
 
 let cache = null;
 
@@ -72,6 +72,10 @@ function migrate(c) {
     // v2: opacità fantasma predefinita al 60% (prima 50%); la cartella inbox non esiste più.
     if (c.ghostOpacity === 0.5) c.ghostOpacity = 0.6;
     delete c.inboxFolder;
+  }
+  if ((c.configVersion || 1) < 3) {
+    // v3: fantasma un po' meno trasparente (70%) se era rimasto il valore predefinito.
+    if (c.ghostOpacity === 0.6 || c.ghostOpacity === 0.5) c.ghostOpacity = 0.7;
   }
   c.configVersion = CONFIG_VERSION;
 }

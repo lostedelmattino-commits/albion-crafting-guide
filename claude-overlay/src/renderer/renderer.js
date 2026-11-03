@@ -64,7 +64,7 @@
     shell.classList.toggle('anchor-left', String(L.corner).endsWith('left'));
     const css = document.documentElement.style;
     css.setProperty('--alpha', String(c.opacity ?? 0.86));
-    css.setProperty('--ghost-alpha', String(c.ghostOpacity ?? 0.6));
+    css.setProperty('--ghost-alpha', String(c.ghostOpacity ?? 0.7));
     const chrome = 118; // barra + campo di testo + margini
     const maxPanelH = Math.max(260, Math.min(c.expandedHeight || 620, L.maxHeight - 20));
     css.setProperty('--expanded-h', `${maxPanelH - chrome}px`);
@@ -943,6 +943,7 @@
     for (const elx of form.elements) {
       if (!elx.name || elx.name === 'apiKey') continue;
       if (elx.type === 'checkbox') elx.checked = Boolean(c[elx.name]);
+      else if (elx.classList.contains('hotkey')) setHotkeyField(elx, c[elx.name] || '');
       else if (c[elx.name] !== undefined) elx.value = c[elx.name];
     }
     form.elements.apiKey.value = '';
@@ -954,7 +955,7 @@
         ? 'In uso la variabile ANTHROPIC_API_KEY. Puoi comunque salvarne una qui.'
         : 'Nessuna chiave: creala nella Console Anthropic (platform.claude.com).';
     $('opacity-out').textContent = `${Math.round((c.opacity ?? 0.86) * 100)}%`;
-    $('ghost-out').textContent = `${Math.round((c.ghostOpacity ?? 0.6) * 100)}%`;
+    $('ghost-out').textContent = `${Math.round((c.ghostOpacity ?? 0.7) * 100)}%`;
     $('settings-msg').textContent = '';
     $('settings-msg').classList.remove('error');
     content.scrollTop = 0;
@@ -1020,7 +1021,7 @@
     const patch = {};
     for (const elx of form.elements) {
       if (!elx.name || elx.name === 'apiKey') continue;
-      patch[elx.name] = elx.type === 'checkbox' ? elx.checked : elx.value;
+      patch[elx.name] = elx.type === 'checkbox' ? elx.checked : elx.classList.contains('hotkey') ? elx.dataset.accel || '' : elx.value;
     }
     const key = form.elements.apiKey.value.trim();
     const backendBefore = state.config.backend;
@@ -1072,17 +1073,23 @@
       e.preventDefault();
       e.stopPropagation();
       if (!e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
-        if (e.key === 'Backspace' || e.key === 'Delete') field.value = '';
+        if (e.key === 'Backspace' || e.key === 'Delete') setHotkeyField(field, '');
         if (e.key === 'Escape' || e.key === 'Tab' || e.key === 'Backspace' || e.key === 'Delete') field.blur();
         return;
       }
       const acc = accelerator(e);
       if (acc) {
-        field.value = acc;
+        setHotkeyField(field, acc);
         field.blur();
       }
     });
   });
+
+  function setHotkeyField(field, accel) {
+    field.dataset.accel = accel;
+    field.value = accel.replace('CommandOrControl', 'Ctrl').replace('Space', 'Spazio');
+    field.title = field.value;
+  }
 
   function accelerator(e) {
     if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return null;
