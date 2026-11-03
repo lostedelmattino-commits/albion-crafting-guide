@@ -19,9 +19,13 @@
     const hold = (html) => `\u0000${slots.push(html) - 1}\u0000`;
     let s = String(src);
     s = s.replace(/`([^`]+)`/g, (_, c) => hold(`<code>${esc(c)}</code>`));
-    s = s.replace(/!?\[\[([^\]]+)\]\]/g, (_, inner) => {
-      const [target, alias] = inner.split('|');
+    s = s.replace(/(!?)\[\[([^\]]+)\]\]/g, (_, bang, inner) => {
+      const [target, alias] = inner.split(/\\?\|/);
       const label = (alias || target).trim();
+      if (bang && /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(target.trim())) {
+        // Immagine incorporata: il renderer la carica dal vault.
+        return hold(`<span class="embed-img" data-embed="${esc(target.trim())}">🖼 ${esc(label)}</span>`);
+      }
       return hold(`<a class="wikilink" data-link="${esc(target.trim())}">${esc(label)}</a>`);
     });
     s = s.replace(/!?\[([^\]]*)\]\(<?([^)\s>]+)>?(?:\s+"[^"]*")?\)/g, (_, text, url) => {
@@ -67,8 +71,8 @@
     return row
       .trim()
       .replace(/^\|/, '')
-      .replace(/\|$/, '')
-      .split('|')
+      .replace(/(?<!\\)\|$/, '')
+      .split(/(?<!\\)\|/) // "\|" dentro una cella (es. alias di un link) non divide
       .map((c) => c.trim());
   }
 

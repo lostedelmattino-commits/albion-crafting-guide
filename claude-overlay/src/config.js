@@ -13,7 +13,8 @@ const DEFAULTS = {
   expandedWidth: 580,
   expandedHeight: 620,
   opacity: 0.86, // opacità dello sfondo del pannello
-  ghostOpacity: 0.5, // opacità dell'intera finestra in modalità fantasma
+  ghostOpacity: 0.6, // opacità della finestra in modalità fantasma
+  notesOpenGhost: false, // apri le note direttamente in modalità fantasma
   autoHideSeconds: 12, // dopo la risposta, quanto resta visibile se non fissata
   noteDisplaySeconds: 15, // quanto resta visibile una nota aperta se non fissata
   hotkeyChat: 'CommandOrControl+Shift+Space',
@@ -29,13 +30,19 @@ const DEFAULTS = {
   effort: 'low', // low = risposte rapide; alza a medium/high per domande difficili
   systemPrompt: '',
   vaultPath: '',
-  inboxFolder: 'Claude Overlay',
+  // Archiviazione automatica nel vault (vedi archive.js)
+  autoArchive: true,
+  classifyModel: 'haiku', // haiku | sonnet | opus
+  mergeModel: 'main', // main = stesso modello della chat | haiku | sonnet | opus
+  confidenceThreshold: 0.6, // sotto questa soglia l'appunto va in "1 - Rough Notes"
+  backupDays: 30,
   startAtLogin: false,
   apiKeyEnc: '',
   apiKeyPlain: '', // usato solo se safeStorage non è disponibile
 };
 
 const PUBLIC_KEYS = Object.keys(DEFAULTS).filter((k) => !k.startsWith('apiKey'));
+const CONFIG_VERSION = 2;
 
 let cache = null;
 
@@ -52,7 +59,17 @@ function load() {
     // primo avvio o file illeggibile: si parte dai default
   }
   cache = { ...DEFAULTS, ...data };
+  migrate(cache);
   return cache;
+}
+
+function migrate(c) {
+  if ((c.configVersion || 1) < 2) {
+    // v2: opacità fantasma predefinita al 60% (prima 50%); la cartella inbox non esiste più.
+    if (c.ghostOpacity === 0.5) c.ghostOpacity = 0.6;
+    delete c.inboxFolder;
+  }
+  c.configVersion = CONFIG_VERSION;
 }
 
 function persist() {
@@ -101,6 +118,10 @@ function update(patch) {
   if (!['subscription', 'api'].includes(c.backend)) c.backend = DEFAULTS.backend;
   if (!['default', 'opus', 'sonnet', 'haiku', 'fable'].includes(c.ccModel)) c.ccModel = DEFAULTS.ccModel;
   if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(c.effort)) c.effort = DEFAULTS.effort;
+  if (!['haiku', 'sonnet', 'opus'].includes(c.classifyModel)) c.classifyModel = DEFAULTS.classifyModel;
+  if (!['main', 'haiku', 'sonnet', 'opus'].includes(c.mergeModel)) c.mergeModel = DEFAULTS.mergeModel;
+  c.confidenceThreshold = clamp(c.confidenceThreshold, 0, 1);
+  c.backupDays = Math.round(clamp(c.backupDays, 1, 365));
   persist();
   return c;
 }

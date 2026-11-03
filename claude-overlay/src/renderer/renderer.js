@@ -48,6 +48,10 @@
     notes: { results: [], selected: 0, current: null },
     modeBeforeSettings: 'chat',
     drafts: { chat: '', notes: '' }, // testo in sospeso per ciascuna modalità
+    attachments: [], // immagini incollate: { full, model: {data, mediaType}, thumb }
+    lastExchange: null, // domanda/risposta precedente (contesto per l'archiviazione)
+    interactive: null, // in modalità fantasma: true mentre tieni premuto Ctrl
+    warnedHotkeys: false,
     panelW: 440,
   };
 
@@ -184,6 +188,11 @@
         input.select();
       }, 0);
     }
+    const failed = state.config.hotkeyFailures || [];
+    if (failed.length && !state.warnedHotkeys) {
+      state.warnedHotkeys = true;
+      setTimeout(() => toast(`Scorciatoie non registrate: ${failed.join(', ')} (cambiale in ⚙)`, true), 400);
+    }
   });
 
   api.on('overlay:request-hide', () => requestHide());
@@ -243,9 +252,10 @@
 
   function setGhostClass(on) {
     state.ghost = Boolean(on);
+    state.interactive = state.ghost ? false : null;
     panel.classList.toggle('ghost', state.ghost);
-    panel.classList.remove('ghost-hover');
-    $('btn-ghost').classList.toggle('on', state.ghost);
+    panel.classList.remove('ghost-peek');
+    document.querySelectorAll('.ghost-toggle').forEach((b) => b.classList.toggle('on', state.ghost));
     updateStatus();
   }
 
@@ -257,19 +267,30 @@
     }
   });
 
-  // In modalità fantasma la finestra ignora il mouse, tranne quando passi sopra
-  // al pulsante fantasma: così puoi sempre tornare indietro con un clic.
-  const ghostBtn = $('btn-ghost');
-  ghostBtn.addEventListener('mouseenter', () => {
+  // In modalità fantasma la finestra ignora i clic, ma riceve ancora il movimento del
+  // mouse: tenendo premuto Ctrl (o passando su un pulsante 👻) torna cliccabile.
+  function setInteractive(on) {
+    if (!state.ghost || state.interactive === on) return;
+    state.interactive = on;
+    api.setIgnoreMouse(!on);
+    panel.classList.toggle('ghost-peek', on);
+  }
+  document.addEventListener('mousemove', (e) => {
     if (!state.ghost) return;
-    api.setIgnoreMouse(false);
-    panel.classList.add('ghost-hover');
+    const overToggle = Boolean(e.target && e.target.closest && e.target.closest('.ghost-toggle'));
+    setInteractive(e.ctrlKey || overToggle);
   });
-  ghostBtn.addEventListener('mouseleave', () => {
-    if (!state.ghost) return;
-    api.setIgnoreMouse(true);
-    panel.classList.remove('ghost-hover');
-  });
+  document.documentElement.addEventListener('mouseleave', () => setInteractive(false));
+  // Ctrl + rotellina scorre la nota invece di ingrandire la pagina.
+  window.addEventListener(
+    'wheel',
+    (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      content.scrollTop += e.deltaY;
+    },
+    { passive: false }
+  );
 
   // ------------------------------------------------------------- timer
 
@@ -359,9 +380,19 @@
     return svg;
   }
 
-  function addTurn(text, ctx) {
+  function addTurn(text, ctx, attachments = []) {
     const turn = el('div', 'turn');
     const user = el('div', 'msg-user');
+    if (attachments.length) {
+      const thumbs = el('div', 'thumbs');
+      for (const a of attachments) {
+        const img = el('img');
+        img.src = a.thumb;
+        img.alt = 'immagine allegata';
+        thumbs.append(img);
+      }
+      user.append(thumbs);
+    }
     if (ctx) {
       const att = el('div', 'attached');
       att.append(icon('i-clip'), document.createTextNode(ctx.title));
@@ -420,14 +451,17 @@
     if (!text) return;
 
     if (/^\/nota(\s|$)/i.test(text)) {
+      // Appunto senza risposta in chat: passa dallo stesso flusso di archiviazione.
       const body = text.replace(/^\/nota\s*/i, '');
       if (!body) return toast('Scrivi il testo dopo /nota', true);
-      const r = await api.notesAppend(body);
-      if (!r.ok) return toast(r.error, true);
+      const images = state.attachments.map((a) => ({ data: a.full, mediaType: 'image/png' }));
       input.value = '';
       autoGrow();
+      clearAttachments();
       updateSendState();
-      return toast(`Appunto salvato in ${r.rel}`);
+      toast('Archivio l’appunto…');
+      const r = await api.archive({ question: '', answer: body, images, kind: 'nota' });
+      return toast(archiveSummary(r), !r.ok);
     }
 
     input.value = '';
@@ -435,7 +469,9 @@
     stopCountdown();
     const ctx = state.context;
     setContext(null);
-    const turn = addTurn(text, ctx);
+    const attachments = state.attachments;
+    clearAttachments();
+    const turn = addTurn(text, ctx, attachments);
     const answer = turn.querySelector('.msg-assistant');
     setView(state.view === 'expanded' ? 'expanded' : 'preview');
     keepInView(turn, true);
@@ -451,7 +487,11 @@
       if (label) label.textContent = msg;
       else statusEl.textContent = msg;
     });
-    const res = await api.chatSend(text, ctx && ctx.rel);
+    const res = await api.chatSend(
+      text,
+      ctx && ctx.rel,
+      attachments.map((a) => a.model)
+    );
     off();
     offStatus();
     if (streamRaf) cancelAnimationFrame(streamRaf);
@@ -460,9 +500,20 @@
     setStreaming(false);
 
     if (res.ok) {
-      answer.innerHTML = Markdown.render(res.text || acc);
+      const full = res.text || acc;
+      answer.innerHTML = Markdown.render(full);
       if (res.stopReason === 'max_tokens') answer.append(el('div', 'interrupted', 'Risposta troncata per lunghezza.'));
-      addActions(turn, text, res.text || acc);
+      if (res.usedNotes && res.usedNotes.length) turn.append(usedNotesLine(res.usedNotes));
+      const job = {
+        question: text,
+        answer: full,
+        previous: state.lastExchange,
+        images: attachments.map((a) => ({ data: a.full, mediaType: 'image/png' })),
+        kind: 'chat',
+      };
+      state.lastExchange = { question: text, answer: full.slice(0, 1500) };
+      addActions(turn, job);
+      if (state.config.autoArchive) runArchive(turn, job);
     } else if (res.aborted) {
       answer.innerHTML = acc ? Markdown.render(acc) : '';
       answer.append(el('div', 'interrupted', 'Risposta interrotta (non entra nella conversazione).'));
@@ -482,7 +533,8 @@
     if (state.visible && !state.pinned && !input.value.trim()) startCountdown(state.config.autoHideSeconds || 12);
   }
 
-  function addActions(turn, question, answer) {
+  function addActions(turn, job) {
+    const answer = job.answer;
     const wrap = el('div', 'msg-actions');
     const copy = el('button', 'chip-btn');
     copy.append(icon('i-copy'), document.createTextNode('Copia'));
@@ -494,20 +546,189 @@
         toast('Copia non riuscita', true);
       }
     });
-    const save = el('button', 'chip-btn');
-    save.append(icon('i-inbox'), document.createTextNode('Salva in Obsidian'));
-    save.addEventListener('click', async () => {
-      const quoted = question
-        .split('\n')
-        .map((l, i) => (i === 0 ? `> [!question] ${l}` : `> ${l}`))
-        .join('\n');
-      const r = await api.notesAppend(`${quoted}\n\n${answer}`);
-      if (r.ok) toast(`Salvato in ${r.rel}`);
-      else toast(r.error, true);
-    });
-    wrap.append(copy, save);
+    wrap.append(copy);
+    if (!state.config.autoArchive) {
+      // Archiviazione automatica spenta: lo stesso flusso parte da questo pulsante.
+      const save = el('button', 'chip-btn');
+      save.append(icon('i-inbox'), document.createTextNode('Salva in Obsidian'));
+      save.addEventListener('click', () => {
+        save.remove();
+        runArchive(turn, job);
+      });
+      wrap.append(save);
+    }
     turn.append(wrap);
   }
+
+  // ------------------------------------------------------- archiviazione
+
+  function usedNotesLine(notes) {
+    const line = el('div', 'used-notes', '📚 Dalle tue note: ');
+    notes.forEach((n, i) => {
+      if (i) line.append(document.createTextNode(' · '));
+      const a = el('a', '', n.title);
+      a.dataset.rel = n.rel;
+      line.append(a);
+    });
+    return line;
+  }
+
+  async function runArchive(turn, job) {
+    const box = el('div', 'archive-box');
+    const pending = el('div', 'archive-line pending', '📁 Archivio nel vault…');
+    box.append(pending);
+    turn.append(box);
+    reportSize();
+    const r = await api.archive(job);
+    box.textContent = '';
+    renderArchive(box, r);
+    reportSize();
+  }
+
+  function renderArchive(box, r) {
+    if (!r.ok) {
+      box.append(el('div', 'archive-line error', `📁 ⚠️ ${r.error || 'Archiviazione non riuscita.'}`));
+      return;
+    }
+    if (r.skipped && !r.items.length && !r.rough) {
+      box.append(el('div', 'archive-line pending', '📁 Niente da archiviare'));
+      return;
+    }
+    for (const it of r.items) {
+      const line = el('div', 'archive-line');
+      const crumbs = el('span', 'crumbs', `📁 ${it.materia} › ${it.categoria} › `);
+      const a = el('a', '', it.titolo);
+      a.dataset.rel = it.rel;
+      crumbs.append(a);
+      line.append(crumbs, el('span', 'state', `(${it.action})`));
+      box.append(line);
+    }
+    if (r.rough) {
+      const line = el('div', 'archive-line warn', '📁 Da sistemare in ');
+      const a = el('a', '', r.roughRel ? r.roughRel.replace(/\.md$/, '') : '1 - Rough Notes');
+      if (r.roughRel) a.dataset.rel = r.roughRel;
+      line.append(a);
+      if (r.reason) line.title = r.reason;
+      box.append(line);
+    }
+    if (r.opId) {
+      const undo = el('button', 'chip-btn');
+      undo.append(icon('i-undo'), document.createTextNode('Annulla'));
+      undo.title = 'Ripristina il vault com’era prima di questa archiviazione';
+      undo.addEventListener('click', async () => {
+        undo.disabled = true;
+        const u = await api.archiveUndo(r.opId);
+        box.textContent = '';
+        if (!u.ok) {
+          box.append(el('div', 'archive-line error', `↩ ${u.error}`));
+        } else {
+          const msg = u.skipped && u.skipped.length
+            ? `↩ Annullata, tranne ${u.skipped.length} file modificati nel frattempo`
+            : '↩ Archiviazione annullata';
+          box.append(el('div', 'archive-line pending', msg));
+        }
+        reportSize();
+      });
+      (box.lastElementChild || box).append(undo);
+    }
+  }
+
+  function archiveSummary(r) {
+    if (!r.ok) return r.error || 'Archiviazione non riuscita.';
+    if (r.items.length) {
+      const it = r.items[0];
+      const more = r.items.length > 1 ? ` (+${r.items.length - 1})` : '';
+      return `Salvato in ${it.materia} → ${it.categoria} → ${it.titolo}${more}`;
+    }
+    if (r.rough) return 'Salvato in Rough Notes, sotto «Da sistemare»';
+    return 'Niente da archiviare';
+  }
+
+  async function openNoteRel(rel) {
+    if (state.mode !== 'notes') setMode('notes', { search: false });
+    await openNote(rel);
+  }
+
+  // -------------------------------------------------------------- allegati
+
+  async function addImageBlob(blob) {
+    if (!blob || !/^image\//.test(blob.type)) return;
+    try {
+      const bitmap = await createImageBitmap(blob);
+      const encode = (w, h, type, quality) => {
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(w));
+        c.height = Math.max(1, Math.round(h));
+        c.getContext('2d').drawImage(bitmap, 0, 0, c.width, c.height);
+        return c.toDataURL(type, quality);
+      };
+      // Originale in PNG per il vault; copia ridotta (max 1568 px) per Claude.
+      const full = encode(bitmap.width, bitmap.height, 'image/png').split(',')[1];
+      const scale = Math.min(1, 1568 / Math.max(bitmap.width, bitmap.height));
+      let modelUrl = encode(bitmap.width * scale, bitmap.height * scale, 'image/png');
+      let mediaType = 'image/png';
+      if (modelUrl.length > 4.5 * 1024 * 1024) {
+        modelUrl = encode(bitmap.width * scale, bitmap.height * scale, 'image/jpeg', 0.9);
+        mediaType = 'image/jpeg';
+      }
+      const thumbScale = Math.min(1, 120 / Math.max(bitmap.width, bitmap.height));
+      const thumb = encode(bitmap.width * thumbScale, bitmap.height * thumbScale, 'image/png');
+      state.attachments.push({ full, model: { data: modelUrl.split(',')[1], mediaType }, thumb });
+      renderAttachments();
+    } catch {
+      toast('Immagine non leggibile', true);
+    }
+  }
+
+  function renderAttachments() {
+    const box = $('attachments');
+    box.textContent = '';
+    state.attachments.forEach((a, i) => {
+      const item = el('div', 'att');
+      const img = el('img');
+      img.src = a.thumb;
+      img.alt = `immagine ${i + 1}`;
+      const rm = el('button');
+      rm.type = 'button';
+      rm.title = 'Togli immagine';
+      rm.append(icon('i-x'));
+      rm.addEventListener('click', () => {
+        state.attachments.splice(i, 1);
+        renderAttachments();
+      });
+      item.append(img, rm);
+      box.append(item);
+    });
+    box.hidden = !state.attachments.length;
+    reportSize();
+  }
+
+  function clearAttachments() {
+    state.attachments = [];
+    renderAttachments();
+  }
+
+  document.addEventListener('paste', (e) => {
+    if (state.mode !== 'chat') return;
+    const files = [...(e.clipboardData ? e.clipboardData.items : [])]
+      .filter((i) => i.kind === 'file' && i.type.startsWith('image/'))
+      .map((i) => i.getAsFile());
+    if (!files.length) return;
+    e.preventDefault();
+    files.forEach(addImageBlob);
+  });
+  panel.addEventListener('dragover', (e) => {
+    if (state.mode !== 'chat') return;
+    e.preventDefault();
+    panel.classList.add('drop-target');
+  });
+  panel.addEventListener('dragleave', () => panel.classList.remove('drop-target'));
+  panel.addEventListener('drop', (e) => {
+    panel.classList.remove('drop-target');
+    if (state.mode !== 'chat') return;
+    e.preventDefault();
+    [...e.dataTransfer.files].filter((f) => f.type.startsWith('image/')).forEach(addImageBlob);
+  });
 
   function newChat() {
     api.chatReset();
@@ -594,12 +815,29 @@
     $('note-title').textContent = r.note.title;
     $('note-folder').textContent = r.note.folder || 'radice del vault';
     noteBody.innerHTML = Markdown.render(r.note.text);
+    loadEmbeds(noteBody);
     results.hidden = true;
     noteView.hidden = false;
     setView(state.view === 'expanded' ? 'expanded' : 'preview');
     content.scrollTop = 0;
-    // La nota resta per qualche secondo; con la puntina resta finché vuoi.
-    if (!state.pinned) startCountdown(state.config.noteDisplaySeconds || 15);
+    // La nota resta per qualche secondo; con la puntina (o in fantasma) resta finché vuoi.
+    if (state.config.notesOpenGhost && !state.ghost) api.setGhost(true);
+    else if (!state.pinned) startCountdown(state.config.noteDisplaySeconds || 15);
+  }
+
+  $('note-ghost').addEventListener('click', () => api.setGhost(!state.ghost));
+
+  // Le immagini ![[...]] della nota, lette dal vault tramite il processo principale.
+  function loadEmbeds(root) {
+    root.querySelectorAll('.embed-img').forEach(async (span) => {
+      const r = await api.notesImage(span.dataset.embed);
+      if (!r.ok || !span.isConnected) return;
+      const img = el('img', 'embed');
+      img.src = r.url;
+      img.alt = span.dataset.embed;
+      img.addEventListener('load', reportSize);
+      span.replaceWith(img);
+    });
   }
 
   function closeNote() {
@@ -638,7 +876,9 @@
     const a = e.target.closest('a');
     if (a) {
       e.preventDefault();
-      if (a.classList.contains('wikilink')) {
+      if (a.dataset.rel) {
+        openNoteRel(a.dataset.rel);
+      } else if (a.classList.contains('wikilink')) {
         const r = await api.notesResolve(a.dataset.link);
         if (r.ok && r.rel) {
           if (state.mode !== 'notes') setMode('notes', { search: false });

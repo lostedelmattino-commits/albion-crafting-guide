@@ -25,12 +25,14 @@
       <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
       <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
       <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
       <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
     </defs>
   </svg>
 
   <div id="shell" class="shell">
     <div id="panel" class="panel is-hidden view-compact mode-chat">
+      <div class="ghost-badge" aria-hidden="true">👻</div>
       <header class="bar" id="bar">
         <div class="tabs" role="tablist" aria-label="Modalità">
           <button class="tab" role="tab" data-mode="chat" title="Chiedi a Claude">
@@ -44,7 +46,7 @@
         <div class="bar-actions">
           <button class="icon-btn only-chat" id="btn-new" title="Nuova conversazione"><svg class="ico"><use href="#i-plus"/></svg></button>
           <button class="icon-btn" id="btn-expand" title="Espandi / riduci"><svg class="ico ico-expand"><use href="#i-expand"/></svg><svg class="ico ico-collapse"><use href="#i-collapse"/></svg></button>
-          <button class="icon-btn" id="btn-ghost" title="Modalità fantasma: resta visibile ma i clic passano alla finestra sotto"><svg class="ico"><use href="#i-ghost"/></svg></button>
+          <button class="icon-btn ghost-toggle" id="btn-ghost" title="Modalità fantasma: resta visibile ma i clic passano alla finestra sotto (Ctrl+Shift+G)"><svg class="ico"><use href="#i-ghost"/></svg></button>
           <button class="icon-btn" id="btn-pin" title="Fissa: non scompare finché non togli la puntina"><svg class="ico"><use href="#i-pin"/></svg></button>
           <button class="icon-btn" id="btn-settings" title="Impostazioni"><svg class="ico"><use href="#i-sliders"/></svg></button>
           <button class="icon-btn" id="btn-close" title="Chiudi (Esc)"><svg class="ico"><use href="#i-x"/></svg></button>
@@ -69,6 +71,7 @@
                 <div class="note-folder" id="note-folder"></div>
               </div>
               <button class="chip-btn" id="note-ask" title="Fai una domanda a Claude su questa nota"><svg class="ico"><use href="#i-spark"/></svg>Chiedi</button>
+              <button class="icon-btn ghost-toggle" id="note-ghost" title="Modalità fantasma: la nota resta sopra le altre finestre e ci clicchi attraverso (Ctrl+Shift+G). Tieni premuto Ctrl per interagire."><svg class="ico"><use href="#i-ghost"/></svg></button>
               <button class="icon-btn" id="note-open" title="Apri in Obsidian"><svg class="ico"><use href="#i-external"/></svg></button>
             </div>
             <div class="md" id="note-body"></div>
@@ -146,9 +149,33 @@
                   <button type="button" class="chip-btn" id="pick-vault">Sfoglia…</button>
                 </span>
               </label>
-              <label>Cartella per gli appunti salvati
-                <input type="text" name="inboxFolder" placeholder="Claude Overlay" spellcheck="false">
-              </label>
+              <label class="check"><input type="checkbox" name="autoArchive"> Archivia in automatico ogni risposta nella nota giusta</label>
+              <div class="row">
+                <label>Modello per classificare
+                  <select name="classifyModel">
+                    <option value="haiku">Haiku (veloce)</option>
+                    <option value="sonnet">Sonnet</option>
+                    <option value="opus">Opus</option>
+                  </select>
+                </label>
+                <label>Modello per unire le note
+                  <select name="mergeModel">
+                    <option value="main">Lo stesso della chat</option>
+                    <option value="haiku">Haiku</option>
+                    <option value="sonnet">Sonnet</option>
+                    <option value="opus">Opus</option>
+                  </select>
+                </label>
+              </div>
+              <div class="row">
+                <label>Soglia di confidenza <small class="inline">(sotto → Rough Notes)</small>
+                  <input type="number" name="confidenceThreshold" min="0" max="1" step="0.05">
+                </label>
+                <label>Giorni di backup
+                  <input type="number" name="backupDays" min="1" max="365">
+                </label>
+              </div>
+              <small>I backup vanno in <code>%APPDATA%\ClaudeOverlay\backups</code>, fuori dal vault.</small>
             </fieldset>
 
             <fieldset>
@@ -180,6 +207,7 @@
                 </label>
                 <label class="check"><input type="checkbox" name="startAtLogin"> Avvia con Windows</label>
               </div>
+              <label class="check"><input type="checkbox" name="notesOpenGhost"> Apri le note direttamente in modalità fantasma</label>
             </fieldset>
 
             <fieldset>
@@ -201,6 +229,7 @@
       </main>
 
       <footer class="inputbar" id="inputbar">
+        <div class="attachments" id="attachments" hidden></div>
         <div class="context-chip" id="context-chip" hidden>
           <svg class="ico"><use href="#i-clip"/></svg><span id="context-label"></span>
           <button type="button" id="context-clear" title="Rimuovi la nota allegata"><svg class="ico"><use href="#i-x"/></svg></button>

@@ -20,6 +20,8 @@ const config = require('./config');
 const { ClaudeChat } = require('./claude');
 const { ClaudeCodeChat, checkClaudeCode } = require('./claude-code');
 const { Vault } = require('./obsidian');
+const { OneShot } = require('./llm');
+const { Archivist, DIRS } = require('./archive');
 
 const CORNERS = [
   ['bottom-right', 'In basso a destra'],
@@ -50,6 +52,20 @@ const apiChat = new ClaudeChat(
 );
 const activeChat = () => (config.get().backend === 'api' ? apiChat : subscriptionChat);
 
+// Archiviazione automatica nel vault (classifica con un modello veloce, scrive la nota giusta).
+const archivist = new Archivist({
+  getConfig: () => config.get(),
+  getVault: () => vault,
+  oneShot: new OneShot(
+    () => config.get(),
+    () => config.getApiKey(),
+    path.join(app.getPath('userData'), 'claude-code', 'oneshot')
+  ),
+  // Fuori dal vault, così i backup non finiscono nella ricerca di Obsidian.
+  backupRoot: path.join(app.getPath('appData'), 'ClaudeOverlay', 'backups'),
+});
+let hotkeyFailures = [];
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -75,6 +91,7 @@ function start() {
   createTray();
   const failed = registerHotkeys();
   if (failed.length) notifyHotkeyFailure(failed);
+  archivist.pruneBackups().catch(() => {});
 
   screen.on('display-metrics-changed', () => {
     workArea = null;
@@ -222,6 +239,7 @@ function registerHotkeys() {
   reg(c.hotkeyGhost, () => {
     if (win && win.isVisible()) setGhost(!ghost);
   });
+  hotkeyFailures = failed;
   return failed;
 }
 
@@ -310,7 +328,7 @@ function applyConfig(patch, apiKey) {
 }
 
 function publicConfig() {
-  return { ...config.publicView(), vaultName: vault ? vault.name : '' };
+  return { ...config.publicView(), vaultName: vault ? vault.name : '', hotkeyFailures };
 }
 
 // ------------------------------------------------------------------- utility
@@ -355,6 +373,33 @@ async function noteAsContext(rel) {
   return `<nota_obsidian titolo="${note.title.replace(/"/g, "'")}">\n${note.text}\n</nota_obsidian>`;
 }
 
+const NOTE_CONTEXT_LIMIT = 12000;
+
+/** Le 3 note più pertinenti del vault, da passare a Claude come contesto. */
+async function relatedNotesContext(question, skipRel) {
+  if (!vault || !vault.root) return { text: '', used: [] };
+  let notes = [];
+  try {
+    notes = await vault.relevant(question, 3, [DIRS.rough, DIRS.template, DIRS.source, DIRS.tags, DIRS.indexes]);
+  } catch {
+    return { text: '', used: [] };
+  }
+  notes = notes.filter((n) => n.rel !== skipRel);
+  if (!notes.length) return { text: '', used: [] };
+  const body = notes
+    .map((n) => {
+      const text = n.text.length > NOTE_CONTEXT_LIMIT ? `${n.text.slice(0, NOTE_CONTEXT_LIMIT)}\n[… nota troncata …]` : n.text;
+      return `<nota titolo="${n.title.replace(/"/g, "'")}" percorso="${n.rel.replace(/"/g, "'")}">\n${text}\n</nota>`;
+    })
+    .join('\n\n');
+  return {
+    text:
+      '<note_utente>\nQueste sono le note dell\'utente. Resta coerente con quello che c\'è scritto; ' +
+      `se una nota è sbagliata o incompleta dillo.\n\n${body}\n</note_utente>`,
+    used: notes.map((n) => ({ rel: n.rel, title: n.title })),
+  };
+}
+
 // ------------------------------------------------------------------------ IPC
 
 ipcMain.handle('config:get', () => ({ config: publicConfig(), layout: layoutInfo() }));
@@ -369,23 +414,52 @@ ipcMain.handle('vault:pick', async () => {
   return res.canceled || !res.filePaths.length ? null : res.filePaths[0];
 });
 
-ipcMain.handle('chat:send', async (e, { text, contextRel }) => {
-  let content = String(text || '').trim();
+ipcMain.handle('chat:send', async (e, { text, contextRel, images }) => {
+  const question = String(text || '').trim();
+  const parts = [];
   if (contextRel) {
     try {
-      content = `${await noteAsContext(contextRel)}\n\n${content}`;
+      parts.push(await noteAsContext(contextRel));
     } catch (err) {
       return { ok: false, error: `Impossibile leggere la nota allegata: ${err.message}` };
     }
   }
+  const related = await relatedNotesContext(question, contextRel);
+  if (related.text) parts.push(related.text);
+  parts.push(question);
+  const textPart = parts.join('\n\n');
+  const imgs = Array.isArray(images) ? images.filter((i) => i && i.data && i.mediaType) : [];
+  const content = imgs.length
+    ? [
+        ...imgs.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.mediaType, data: i.data } })),
+        { type: 'text', text: textPart },
+      ]
+    : textPart;
   const send = (channel, payload) => {
     if (!e.sender.isDestroyed()) e.sender.send(channel, payload);
   };
-  return activeChat().send(
+  const result = await activeChat().send(
     content,
     (delta) => send('chat:delta', delta),
     (status) => send('chat:status', status)
   );
+  return { ...result, usedNotes: related.used };
+});
+
+ipcMain.handle('archive:run', async (_e, job) => {
+  try {
+    return await archivist.archive(job || {});
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('archive:undo', async (_e, opId) => {
+  try {
+    return await archivist.undo(opId);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
 });
 
 ipcMain.on('chat:abort', () => activeChat().abort());
@@ -420,9 +494,17 @@ ipcMain.handle('notes:resolve', async (_e, link) => {
   }
 });
 
-ipcMain.handle('notes:append', async (_e, text) => {
+const IMAGE_TYPES = { png: 'png', jpg: 'jpeg', jpeg: 'jpeg', gif: 'gif', webp: 'webp', bmp: 'bmp', svg: 'svg+xml' };
+
+ipcMain.handle('notes:image', async (_e, name) => {
   try {
-    return { ok: true, rel: await vault.append(text, config.get().inboxFolder) };
+    const full = vault ? await vault.resolveAsset(name) : null;
+    if (!full) return { ok: false, error: 'Immagine non trovata.' };
+    const type = IMAGE_TYPES[path.extname(full).slice(1).toLowerCase()];
+    const st = await require('fs').promises.stat(full);
+    if (!type || st.size > 15 * 1024 * 1024) return { ok: false, error: 'Immagine non visualizzabile.' };
+    const data = await require('fs').promises.readFile(full);
+    return { ok: true, url: `data:image/${type};base64,${data.toString('base64')}` };
   } catch (err) {
     return { ok: false, error: err.message };
   }

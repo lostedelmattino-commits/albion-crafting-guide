@@ -67,7 +67,7 @@ class Vault {
           }
           const title = e.name.slice(0, -3);
           const folder = path.posix.dirname(rel) === '.' ? '' : path.posix.dirname(rel);
-          this.notes.set(rel, { rel, title, folder, mtime: st.mtimeMs, text, lower: text.toLowerCase() });
+          this.notes.set(rel, { rel, title, folder, mtime: st.mtimeMs, text, lower: plain(text) });
         }
       }
     };
@@ -82,7 +82,7 @@ class Vault {
   /** Ricerca per titolo, percorso e contenuto. Query vuota = note modificate di recente. */
   async search(query, limit = 8) {
     await this.ensureIndexed();
-    const q = String(query || '').trim().toLowerCase();
+    const q = plain(String(query || '').trim());
     const all = [...this.notes.values()];
     if (!q) {
       return all
@@ -93,8 +93,8 @@ class Vault {
     const terms = q.split(/\s+/).filter(Boolean);
     const scored = [];
     for (const n of all) {
-      const title = n.title.toLowerCase();
-      const rel = n.rel.toLowerCase();
+      const title = plain(n.title);
+      const rel = plain(n.rel);
       let score = 0;
       let ok = true;
       for (const t of terms) {
@@ -139,25 +139,76 @@ class Vault {
     return null;
   }
 
-  /** Aggiunge un appunto alla nota del giorno nella cartella inbox. */
-  async append(text, folder) {
-    if (!this.root) throw new Error('Cartella del vault non impostata (⚙ → Vault Obsidian).');
-    const now = new Date();
-    const day = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const time = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-    const relDir = sanitizeFolder(folder);
-    const rel = (relDir ? `${relDir}/` : '') + `${day}.md`;
-    const full = this.safePath(rel);
-    await fsp.mkdir(path.dirname(full), { recursive: true });
-    let prefix = '';
-    try {
-      await fsp.access(full);
-    } catch {
-      prefix = `# ${day}\n`;
+  /**
+   * Le note più pertinenti per una domanda (sezione 6 del brief): parole chiave della
+   * domanda cercate in titoli, percorsi e testo. Ritorna al massimo `limit` note.
+   * @param {string[]} excludePrefixes cartelle da ignorare (es. "1 - Rough Notes")
+   */
+  async relevant(query, limit = 3, excludePrefixes = []) {
+    await this.ensureIndexed();
+    const terms = keywords(query);
+    if (!terms.length) return [];
+    const scored = [];
+    for (const n of this.notes.values()) {
+      if (excludePrefixes.some((p) => n.rel.startsWith(`${p}/`))) continue;
+      const title = plain(n.title);
+      const rel = plain(n.rel);
+      let score = 0;
+      let matched = 0;
+      for (const t of terms) {
+        let s = 0;
+        if (title.includes(t)) s += 6;
+        else if (rel.includes(t)) s += 2;
+        s += Math.min(countHits(n.lower, t, 5), 5);
+        if (s > 0) matched++;
+        score += s;
+      }
+      if (!matched) continue;
+      score *= 0.5 + matched / terms.length; // premia le note che coprono più parole
+      if (score >= 6) scored.push({ n, score });
     }
-    await fsp.appendFile(full, `${prefix}\n## ${time}\n${String(text).trim()}\n`, 'utf8');
-    this.lastScan = 0; // forza la reindicizzazione alla prossima ricerca
-    return rel;
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, limit).map(({ n }) => ({ rel: n.rel, title: n.title, text: n.text }));
+  }
+
+  /** Tutti i nomi di nota (senza .md, minuscoli): Obsidian collega le note per nome. */
+  async noteNames() {
+    await this.ensureIndexed(true);
+    return new Set([...this.notes.values()].map((n) => n.title.toLowerCase()));
+  }
+
+  invalidate() {
+    this.lastScan = 0;
+  }
+
+  /** Percorso di un allegato (es. immagine di ![[nome.png]]): prima Images/, poi tutto il vault. */
+  async resolveAsset(name) {
+    if (!this.root) return null;
+    const clean = String(name || '').split('|')[0].split('#')[0].trim().replace(/\\/g, '/');
+    if (!clean || clean.split('/').some((p) => p === '..' || p === '.obsidian')) return null;
+    for (const rel of [clean, `Images/${path.posix.basename(clean)}`]) {
+      try {
+        const full = this.safePath(rel);
+        if ((await fsp.stat(full)).isFile()) return full;
+      } catch {
+        // non qui
+      }
+    }
+    const wanted = path.posix.basename(clean).toLowerCase();
+    const walk = async (dir) => {
+      const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const full = path.join(dir, e.name);
+        if (e.isFile() && e.name.toLowerCase() === wanted) return full;
+        if (e.isDirectory()) {
+          const hit = await walk(full);
+          if (hit) return hit;
+        }
+      }
+      return null;
+    };
+    return walk(this.root);
   }
 
   safePath(rel) {
@@ -200,15 +251,32 @@ function countHits(hay, needle, max) {
   return count;
 }
 
-function sanitizeFolder(folder) {
-  return String(folder || '')
-    .split(/[\\/]+/)
-    .filter((p) => p && p !== '.' && p !== '..')
-    .join('/');
+// Minuscolo e senza accenti, per confronti più tolleranti ("perché" = "perche").
+function plain(s) {
+  return String(s)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 }
 
-function pad(n) {
-  return String(n).padStart(2, '0');
+const STOPWORDS = new Set(
+  (
+    'il lo la le gli un uno una di da in con su per tra fra e ed o od ma che chi come cosa cos quando dove perche ' +
+    'non si mi ti ci vi ne del dello della dei degli delle al allo alla ai agli alle dal dallo dalla dai dagli dalle ' +
+    'nel nello nella nei negli nelle sul sullo sulla sui sugli sulle col coi e sono era essere ho hai ha abbiamo hanno ' +
+    'fare faccio fa fai posso puoi puo devo deve voglio vorrei serve questo questa questi queste quello quella quelli ' +
+    'quelle mio mia miei mie tuo tua suo sua anche piu molto tutto tutti ogni quale quali quanto quanti modo meglio ' +
+    'poi gia ancora solo senza dopo prima sempre mai allora quindi pero oppure qualcosa qualche altro altra ' +
+    'the and for with how what why when where can does into from this that'
+  ).split(' ')
+);
+
+function keywords(text) {
+  const words = plain(text)
+    .replace(/[^\p{L}\p{N}\s+-]/gu, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+  return [...new Set(words)].slice(0, 25);
 }
 
 module.exports = { Vault, stripFrontmatter };

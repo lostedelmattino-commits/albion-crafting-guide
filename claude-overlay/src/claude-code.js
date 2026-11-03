@@ -320,4 +320,4 @@ function friendlyError(detail, rateLimit) {
   );
 }
 
-module.exports = { ClaudeCodeChat, checkClaudeCode, findClaude };
+module.exports = { ClaudeCodeChat, checkClaudeCode, findClaude, launch, killTree, subscriptionEnv };

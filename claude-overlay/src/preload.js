@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('overlay', {
   saveConfig: (patch, apiKey) => ipcRenderer.invoke('config:save', { patch, apiKey }),
   pickVault: () => ipcRenderer.invoke('vault:pick'),
 
-  chatSend: (text, contextRel) => ipcRenderer.invoke('chat:send', { text, contextRel }),
+  chatSend: (text, contextRel, images) => ipcRenderer.invoke('chat:send', { text, contextRel, images }),
   chatAbort: () => ipcRenderer.send('chat:abort'),
   chatReset: () => ipcRenderer.send('chat:reset'),
   checkClaudeCode: (customPath) => ipcRenderer.invoke('cc:check', customPath),
@@ -25,7 +25,9 @@ contextBridge.exposeInMainWorld('overlay', {
   notesSearch: (q) => ipcRenderer.invoke('notes:search', q),
   notesRead: (rel) => ipcRenderer.invoke('notes:read', rel),
   notesResolve: (link) => ipcRenderer.invoke('notes:resolve', link),
-  notesAppend: (text) => ipcRenderer.invoke('notes:append', text),
+  notesImage: (name) => ipcRenderer.invoke('notes:image', name),
+  archive: (job) => ipcRenderer.invoke('archive:run', job),
+  archiveUndo: (opId) => ipcRenderer.invoke('archive:undo', opId),
   openInObsidian: (rel) => ipcRenderer.send('notes:open', rel),
   openExternal: (url) => ipcRenderer.send('open:external', url),
 

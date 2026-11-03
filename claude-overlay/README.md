@@ -12,14 +12,30 @@ Un pop-up flottante e semitrasparente per Windows: lo richiami con una scorciato
 - Clicca sulla risposta (o su ⤢) per espanderla: diventa più grande e scorrevole, con tutta la conversazione.
 - Dopo la risposta il pop-up resta visibile per qualche secondo (barra arancione sotto l'intestazione) e poi sparisce. Se ci passi sopra con il mouse il conto alla rovescia si ferma.
 - **Puntina** 📌: lo tiene fisso finché vuoi. Quando togli la puntina, il pop-up si chiude.
-- **Modalità fantasma** 👻 (`Ctrl+Shift+G`): il pop-up resta visibile e trasparente, ma i clic passano alla finestra sotto. Per uscire, passa sopra all'icona del fantasma e cliccala, oppure ripremi `Ctrl+Shift+G`.
 - **Dettatura** 🎤: il pulsante microfono avvia la digitazione vocale di Windows (`Win+H`) dentro il campo di testo.
-- **Copia** / **Salva in Obsidian** sotto ogni risposta. Con `/nota testo` salvi al volo un appunto senza chiamare Claude.
+- **Immagini**: incollale (`Ctrl+V`) o trascinale nel pop-up; Claude le vede e, se archivi, finiscono in `Images/`.
+- **Le tue note come contesto**: a ogni domanda l'overlay cerca nel vault le 3 note più pertinenti e le passa a Claude, che resta coerente con quello che hai scritto (e ti dice se una nota è sbagliata o incompleta). Sotto la risposta vedi «📚 Dalle tue note: …».
+
+**Archiviazione automatica nel vault**
+- Dopo ogni risposta un modello veloce (Haiku) decide se e dove archiviarla: materia → categoria → nota, leggendo la struttura del vault dal disco.
+- Argomento nuovo → nota nuova in `6 - Atomic Notes/{Materia}/{NN} {Categoria}/` con il formato delle tue note (data, Status, Tags, titolo, References) e link nell'indice `4 - Indexes/{Materia} - {Categoria}.md`.
+- Argomento già presente → la nota esistente viene **unita** (dal modello principale), con backup prima e controlli dopo: se qualcosa non torna, il nuovo testo va in fondo sotto `## Aggiunta {data}` invece di sovrascrivere.
+- Se serve, crea da sola una categoria (`05 Basi e interfaccia`, indice e riga nella nota tag) o una materia nuova (aggiornando anche «Come usare questo vault»).
+- Chiacchiere e ringraziamenti non vengono archiviati. Se è incerto (confidenza sotto 0,6) o qualcosa va storto, l'appunto finisce in `1 - Rough Notes/{data}.md` sotto `## Da sistemare`: non si perde mai niente.
+- Script lunghi (oltre ~40 righe) → file in `2 - Source Material/` e nota `Script - …` in `Maya/09 Script Python`.
+- Sotto la risposta: `📁 ZBrush › Sculpting › CurveTube… (creata)`. Clicca per aprire la nota nel pop-up, **↩ Annulla** per rimettere il vault com'era.
+- Ogni giorno, in `1 - Rough Notes/{data}.md` sotto `## Archiviato oggi`, trovi il registro di cosa è stato creato o aggiornato.
+- `/nota testo` passa dallo stesso flusso senza risposta in chat: «Salvato in ZBrush → Sculpting → …».
+- Con «Archivia in automatico» spento resta il pulsante **Salva in Obsidian** sotto ogni risposta.
 
 **Note di Obsidian** (`Ctrl+Shift+O`)
 - Mostra subito le note modificate di recente; scrivi per cercare per titolo e contenuto (↑/↓ per scegliere, Invio per aprire).
-- La nota aperta compare nel pop-up per qualche secondo (15 di default), poi sparisce. Con la puntina resta fissa, anche in modalità fantasma come promemoria trasparente sopra le altre finestre.
-- I `[[wikilink]]` si aprono nel pop-up; ↗ apre la nota in Obsidian.
+- La nota aperta compare nel pop-up per qualche secondo (15 di default), poi sparisce. Con la puntina 📌 resta fissa.
+- I `[[wikilink]]` si aprono nel pop-up, le immagini `![[...]]` si vedono; ↗ apre la nota in Obsidian.
+- **Modalità fantasma** 👻 (pulsante nella nota, nella barra, o `Ctrl+Shift+G`): la nota resta sopra le altre finestre, trasparente (60%), con bordo tratteggiato e 👻 nell'angolo, e i clic passano alla finestra sotto. Non sparisce dopo i 15 secondi.
+  - **Tieni premuto `Ctrl`** sopra la nota: torna cliccabile finché tieni premuto (per scorrere con la rotellina o cliccare un link), poi torna fantasma.
+  - Per uscire: `Ctrl+Shift+G`, oppure passa sul pulsante 👻 e cliccalo.
+  - Non è attiva di default; se la vuoi sempre: ⚙ → «Apri le note direttamente in modalità fantasma».
 - **Chiedi** allega la nota alla prossima domanda a Claude (es. «riassumila», «fammi 5 domande di ripasso»).
 
 Funziona leggendo direttamente la cartella del vault: non serve installare plugin in Obsidian.
@@ -70,7 +86,8 @@ Dall'icona ⚙ nel pop-up, oppure dal menu dell'icona nell'area di notifica:
 |---|---|---|
 | Posizione | In basso a destra | Anche in alto, e a sinistra. Si cambia al volo dal menu dell'icona. |
 | Opacità sfondo | 86% | Anteprima dal vivo mentre muovi il cursore. |
-| Opacità modalità fantasma | 50% | |
+| Opacità modalità fantasma | 60% | |
+| Apri le note in modalità fantasma | no | |
 | Risposta visibile per | 12 s | Dopo la risposta, se non fissata. |
 | Nota visibile per | 15 s | Dopo aver aperto una nota, se non fissata. |
 | Collegamento | Abbonamento (tramite Claude Code) | Oppure chiave API, a consumo. |
@@ -78,7 +95,11 @@ Dall'icona ⚙ nel pop-up, oppure dal menu dell'icona nell'area di notifica:
 | Modello | Predefinito del piano | Abbonamento: Opus, Sonnet, Haiku, Fable (se inclusi nel piano). Chiave API: Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1. |
 | Ragionamento | Rapido (low) | Alzalo per domande difficili: risposte migliori ma più lente e più consumo. |
 | Ricerca web | sì | Solo modalità abbonamento: Claude può cercare sul web. Non ha altri strumenti (niente file, niente comandi). |
-| Cartella appunti | `Claude Overlay` | «Salva in Obsidian» e `/nota` scrivono in `Claude Overlay/AAAA-MM-GG.md`. |
+| Archivia in automatico | sì | Spento: resta il pulsante «Salva in Obsidian». |
+| Modello per classificare | Haiku | Veloce ed economico; Sonnet o Opus se vuoi più precisione. |
+| Modello per unire le note | lo stesso della chat | |
+| Soglia di confidenza | 0,6 | Sotto la soglia l'appunto va in `1 - Rough Notes` sotto «Da sistemare». |
+| Giorni di backup | 30 | I backup stanno in `%APPDATA%\ClaudeOverlay\backups\{data}\…`, fuori dal vault. |
 | Scorciatoie | `Ctrl+Shift+Spazio`, `Ctrl+Shift+O`, `Ctrl+Shift+G` | Clicca il campo e premi la nuova combinazione. |
 | Avvia con Windows | no | |
 
@@ -95,13 +116,16 @@ Le impostazioni stanno in `%APPDATA%\claude-overlay\config.json` (menu dell'icon
 
 ## Privacy
 
-- Le note vengono lette solo in locale. Il contenuto di una nota viene inviato a Claude solo quando premi **Chiedi** su quella nota.
+- Le note vengono lette in locale. A Claude arrivano: le 3 note più pertinenti a ogni domanda (come contesto), la nota su cui premi **Chiedi**, e per l'archiviazione l'elenco dei titoli del vault più qualche estratto delle note simili.
+- L'archiviazione non scrive mai dentro `.obsidian`, non cancella e non rinomina note (romperebbe i link). Scrive in modo atomico (file temporaneo e poi rinomina), così Obsidian non legge mai un file a metà, e fa una sola archiviazione alla volta.
+- **↩ Annulla** non tocca un file che hai modificato nel frattempo (per esempio in Obsidian); le note nuove annullate vengono spostate nei backup, non cancellate.
 - In modalità abbonamento Claude Code salva le conversazioni come fa di solito (in `%USERPROFILE%\.claude\projects`), così dopo un'interruzione la conversazione continua con il contesto di prima. In modalità chiave API la conversazione resta solo in memoria finché non premi **+** o chiudi l'app.
 - Claude Code gira in una cartella vuota dell'overlay e senza strumenti per file o comandi: può solo rispondere e, se lo lasci attivo, cercare sul web.
 
 ## Limiti noti
 
-- In modalità fantasma il contenuto non si può scorrere (la rotellina passa alla finestra sotto): esci dalla modalità fantasma, scorri e rientra.
+- In modalità fantasma, per scorrere o cliccare tieni premuto `Ctrl` sopra la nota (va mosso il mouse per far "sentire" il tasto).
+- Ogni archiviazione è una chiamata in più a Claude (Haiku, e il modello principale quando unisce): in modalità abbonamento conta nei limiti del piano. Se preferisci archiviare solo quando vuoi tu, spegni «Archivia in automatico».
 - La dettatura usa la digitazione vocale di Windows: deve essere attiva in *Impostazioni → Ora e lingua → Voce*.
 - Se un'altra app usa già una delle scorciatoie, l'app te lo segnala: cambiala dalle impostazioni.
 - La prima domanda dopo l'apertura può impiegare un paio di secondi in più: l'overlay avvia Claude Code in anticipo quando compare, poi lo tiene pronto e lo chiude dopo 10 minuti di inattività.
@@ -114,6 +138,8 @@ src/
   preload.js       ponte sicuro verso l'interfaccia
   claude-code.js   conversazione tramite Claude Code (abbonamento)
   claude.js        conversazione tramite chiave API (SDK ufficiale)
+  archive.js       archiviazione nel vault (classifica, scrive, unisce, annulla)
+  llm.js           chiamate singole a Claude per classificare e unire
   obsidian.js      ricerca, lettura e scrittura nel vault
   config.js        impostazioni e chiave cifrata
   renderer/        interfaccia (HTML, CSS, JS, Markdown sicuro)
