@@ -36,10 +36,11 @@ irm https://claude.ai/install.ps1 | iex
 
 Poi apri un nuovo terminale, esegui `claude` e scegli l'accesso con il tuo account Claude (Pro o Max). Quando vedi il prompt di Claude Code puoi chiuderlo con `/exit`.
 
-**2. Avvia l'overlay:**
+**2. Avvia l'overlay:** apri la cartella `claude-overlay` e fai doppio clic su **`Avvia.cmd`**. La prima volta scarica i componenti (qualche minuto), poi parte in pochi secondi.
+
+In alternativa, da un terminale aperto nella cartella `claude-overlay`:
 
 ```bash
-cd claude-overlay
 npm install
 npm start
 ```
