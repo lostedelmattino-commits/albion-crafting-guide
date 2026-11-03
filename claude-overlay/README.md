@@ -13,6 +13,7 @@ Un pop-up flottante e semitrasparente per Windows: lo richiami con una scorciato
 - Clicca sulla risposta (o su ⤢) per espanderla: diventa più grande e scorrevole, con tutta la conversazione.
 - Dopo la risposta il pop-up resta visibile per qualche secondo (barra arancione sotto l'intestazione) e poi sparisce. Se ci passi sopra con il mouse il conto alla rovescia si ferma.
 - **Puntina** 📌: lo tiene fisso finché vuoi. Quando togli la puntina, il pop-up si chiude.
+- **Si apre già fissato** (impostazione «Apri la chat già fissata», attiva di default): fai la domanda e torni al tuo programma con un clic, senza Alt+Tab, mentre il pop-up resta visibile. Si chiude con ✕, `Esc` o ripremendo la scorciatoia; per scrivere di nuovo clicca nel campo o ripremi `Ctrl+Shift+Spazio`.
 - **Dettatura** 🎤: il pulsante microfono avvia la digitazione vocale di Windows (`Win+H`) dentro il campo di testo.
 - **Immagini**: incollale (`Ctrl+V`) o trascinale nel pop-up; Claude le vede e, se archivi, finiscono in `Images/`.
 - **Le tue note come contesto**: a ogni domanda l'overlay cerca nel vault le 3 note più pertinenti e le passa a Claude, che resta coerente con quello che hai scritto (e ti dice se una nota è sbagliata o incompleta). Sotto la risposta vedi «📚 Dalle tue note: …».

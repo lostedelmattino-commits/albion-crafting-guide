@@ -18,6 +18,7 @@ const DEFAULTS = {
   opacity: 0.86, // opacità dello sfondo del pannello
   ghostOpacity: 0.6, // opacità della finestra in modalità fantasma
   notesOpenGhost: false, // apri le note direttamente in modalità fantasma
+  openPinned: true, // la chat si apre già fissata: resta visibile mentre lavori in un'altra finestra
   autoHideSeconds: 12, // dopo la risposta, quanto resta visibile se non fissata
   noteDisplaySeconds: 15, // quanto resta visibile una nota aperta se non fissata
   hotkeyChat: 'CommandOrControl+Shift+Space',

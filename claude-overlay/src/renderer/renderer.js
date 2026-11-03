@@ -178,6 +178,8 @@
     state.visible = true;
     if (mode !== state.mode || !wasVisible) setMode(mode);
     if (mode === 'chat' && !wasVisible) setView('compact');
+    // Chat già fissata: puoi tornare al tuo programma con un clic, il pop-up resta lì.
+    if (!wasVisible && mode === 'chat' && state.config.openPinned) setPinned(true, { silent: true });
     if (!wasVisible) {
       panel.classList.add('is-hidden');
       requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.remove('is-hidden')));
