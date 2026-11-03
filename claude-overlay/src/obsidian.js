@@ -18,6 +18,73 @@ class Vault {
     this.lastScan = 0;
     this.scanning = null;
     this.generation = 0; // cresce a ogni invalidate(): una scansione già partita non conta più
+    // Dopo la prima scansione, Windows ci avvisa dei file cambiati (fs.watch ricorsivo):
+    // si rileggono solo quelli, invece di ripassare tutto il vault ogni 20 secondi.
+    this.watcher = undefined;
+    this.changed = new Set();
+    this.needFull = false;
+  }
+
+  startWatcher() {
+    if (this.watcher !== undefined || !this.root) return;
+    try {
+      this.watcher = fs.watch(this.root, { recursive: true }, (_event, filename) => {
+        const rel = filename ? String(filename).split(path.sep).join('/') : '';
+        if (!rel) {
+          this.needFull = true;
+          return;
+        }
+        const parts = rel.split('/');
+        if (parts.some((p) => p.startsWith('.') || SKIP_DIRS.has(p))) return; // .obsidian, file temporanei…
+        if (rel.toLowerCase().endsWith('.md')) this.changed.add(rel);
+        else if (!path.extname(rel)) this.needFull = true; // cartella creata, rinominata o cancellata
+      });
+      this.watcher.on('error', () => this.close());
+    } catch {
+      this.watcher = null; // non disponibile: si torna alla riscansione periodica
+    }
+  }
+
+  close() {
+    if (this.watcher) this.watcher.close();
+    this.watcher = null;
+  }
+
+  /** File scritti dall'overlay: aggiornati subito, senza aspettare l'avviso del sistema. */
+  markChanged(rels) {
+    if (!this.watcher) {
+      this.invalidate();
+      return;
+    }
+    for (const r of rels) if (String(r).toLowerCase().endsWith('.md')) this.changed.add(r);
+  }
+
+  async refreshChanged() {
+    const rels = [...this.changed];
+    this.changed.clear();
+    for (const rel of rels) {
+      const full = path.join(this.root, ...rel.split('/'));
+      let st = null;
+      try {
+        st = await fsp.stat(full);
+      } catch {
+        st = null;
+      }
+      if (!st || !st.isFile() || st.size > MAX_FILE_BYTES) {
+        this.notes.delete(rel);
+        continue;
+      }
+      const prev = this.notes.get(rel);
+      if (prev && prev.mtime === st.mtimeMs) continue;
+      try {
+        const text = await fsp.readFile(full, 'utf8');
+        const title = path.posix.basename(rel, '.md');
+        const folder = path.posix.dirname(rel) === '.' ? '' : path.posix.dirname(rel);
+        this.notes.set(rel, { rel, title, folder, mtime: st.mtimeMs, text, lower: plain(text) });
+      } catch {
+        this.notes.delete(rel);
+      }
+    }
   }
 
   get name() {
@@ -26,13 +93,25 @@ class Vault {
 
   async ensureIndexed(force = false) {
     if (!this.root) throw new Error('Cartella del vault non impostata (⚙ → Vault Obsidian).');
-    if (!force && Date.now() - this.lastScan < RESCAN_MS) return;
+    if (!force && this.lastScan) {
+      if (this.watcher) {
+        if (!this.needFull) {
+          if (this.changed.size) await this.refreshChanged();
+          return;
+        }
+      } else if (Date.now() - this.lastScan < RESCAN_MS) {
+        return;
+      }
+    }
+    this.needFull = false;
+    this.changed.clear();
     if (!this.scanning) {
       this.scanning = this.scan().finally(() => {
         this.scanning = null;
       });
     }
     await this.scanning;
+    this.startWatcher();
   }
 
   async scan() {
@@ -280,7 +359,7 @@ function keywords(text) {
     .replace(/[^\p{L}\p{N}\s+-]/gu, ' ')
     .split(/\s+/)
     .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
-  return [...new Set(words)].slice(0, 25);
+  return [...new Set(words)].slice(0, 15);
 }
 
 module.exports = { Vault, stripFrontmatter };

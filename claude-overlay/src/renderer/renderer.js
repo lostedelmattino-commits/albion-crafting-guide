@@ -270,6 +270,9 @@
   }
 
   api.on('overlay:ghost', (on) => {
+    peek.ctrlFromMain = false;
+    peek.ctrlFromEvent = false;
+    peek.overToggle = false;
     setGhostClass(on);
     if (on) {
       setPinned(true, { silent: true });
@@ -279,18 +282,31 @@
 
   // In modalità fantasma la finestra ignora i clic, ma riceve ancora il movimento del
   // mouse: tenendo premuto Ctrl (o passando su un pulsante 👻) torna cliccabile.
+  // Cliccabile se: Ctrl premuto (da main su Windows, o dall'evento del mouse altrove)
+  // oppure il mouse è sopra un pulsante 👻.
+  const peek = { ctrlFromMain: false, ctrlFromEvent: false, overToggle: false };
   function setInteractive(on) {
     if (!state.ghost || state.interactive === on) return;
     state.interactive = on;
     api.setIgnoreMouse(!on);
     panel.classList.toggle('ghost-peek', on);
   }
+  const updatePeek = () => setInteractive(peek.ctrlFromMain || peek.ctrlFromEvent || peek.overToggle);
+  api.on('overlay:peek', (down) => {
+    peek.ctrlFromMain = Boolean(down);
+    updatePeek();
+  });
   document.addEventListener('mousemove', (e) => {
     if (!state.ghost) return;
-    const overToggle = Boolean(e.target && e.target.closest && e.target.closest('.ghost-toggle'));
-    setInteractive(e.ctrlKey || overToggle);
+    peek.overToggle = Boolean(e.target && e.target.closest && e.target.closest('.ghost-toggle'));
+    peek.ctrlFromEvent = e.ctrlKey;
+    updatePeek();
   });
-  document.documentElement.addEventListener('mouseleave', () => setInteractive(false));
+  document.documentElement.addEventListener('mouseleave', () => {
+    peek.overToggle = false;
+    peek.ctrlFromEvent = false;
+    updatePeek();
+  });
   // Ctrl + rotellina scorre la nota invece di ingrandire la pagina.
   window.addEventListener(
     'wheel',
@@ -598,6 +614,7 @@
     turn.append(box);
     reportSize();
     const r = await api.archive(job);
+    job.images = []; // le immagini sono salvate: non tenerle in memoria per tutta la chat
     box.textContent = '';
     renderArchive(box, r);
     reportSize();

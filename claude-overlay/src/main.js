@@ -51,6 +51,8 @@ const apiChat = new ClaudeChat(
   () => config.getApiKey()
 );
 const activeChat = () => (config.get().backend === 'api' ? apiChat : subscriptionChat);
+// Quando Claude Code riparte con una conversazione nuova, le note di contesto vanno rimandate.
+subscriptionChat.onFresh = () => sentNotes.clear();
 
 // Archiviazione automatica nel vault (classifica con un modello veloce, scrive la nota giusta).
 const archivist = new Archivist({
@@ -88,6 +90,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   apiChat.abort();
   subscriptionChat.dispose();
+  stopCtrlWatcher();
 });
 
 function start() {
@@ -262,8 +265,65 @@ function hideOverlay() {
   updateTray();
 }
 
+// ---------------------------------------------------------- Ctrl in fantasma
+// In modalità fantasma la finestra non ha mai il focus, quindi non "vede" i tasti.
+// Su Windows un piccolo PowerShell legge lo stato reale di Ctrl (GetAsyncKeyState,
+// valido anche mentre lavori in Maya/ZBrush) e lo comunica qui: con Ctrl premuto
+// il pop-up torna cliccabile. Gira solo finché la modalità fantasma è attiva.
+let ctrlWatcher = null;
+let ctrlDown = false;
+
+function startCtrlWatcher() {
+  if (process.platform !== 'win32' || ctrlWatcher) return;
+  const script = [
+    'Add-Type -TypeDefinition @"',
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'public static class OverlayKeys {',
+    '  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);',
+    '}',
+    '"@',
+    '$last = -1',
+    'while ($true) {',
+    '  $down = 0',
+    '  if (([OverlayKeys]::GetAsyncKeyState(0x11) -band 0x8000) -ne 0) { $down = 1 }',
+    '  if ($down -ne $last) { [Console]::Out.WriteLine($down); [Console]::Out.Flush(); $last = $down }',
+    '  Start-Sleep -Milliseconds 40',
+    '}',
+  ].join('\r\n');
+  const child = spawn(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
+  );
+  ctrlWatcher = child;
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    const last = chunk.trim().split(/\s+/).pop();
+    if (last === '1' || last === '0') setCtrlDown(last === '1');
+  });
+  child.on('error', () => {});
+  child.on('exit', () => {
+    if (ctrlWatcher === child) ctrlWatcher = null;
+  });
+}
+
+function stopCtrlWatcher() {
+  if (ctrlWatcher) ctrlWatcher.kill();
+  ctrlWatcher = null;
+  setCtrlDown(false);
+}
+
+function setCtrlDown(down) {
+  if (ctrlDown === down) return;
+  ctrlDown = down;
+  if (win && ghost) win.webContents.send('overlay:peek', down);
+}
+
 function setGhost(on) {
   ghost = Boolean(on);
+  if (ghost) startCtrlWatcher();
+  else stopCtrlWatcher();
   if (!win) return;
   // forward: true continua a inoltrare il movimento del mouse, così il pulsante
   // "fantasma" può tornare cliccabile quando ci passi sopra.
@@ -365,8 +425,12 @@ function applyConfig(patch, apiKey) {
   const c = config.update(patch);
   if (apiKey !== undefined && apiKey !== null) config.setApiKey(apiKey);
   if (c.corner !== before.corner && before.customAnchor) config.setAnchor(null);
-  if (c.vaultPath !== before.vaultPath) vault = new Vault(c.vaultPath);
+  if (c.vaultPath !== before.vaultPath) {
+    if (vault) vault.close();
+    vault = new Vault(c.vaultPath);
+  }
   if (c.backend !== before.backend) {
+    sentNotes.clear();
     // Cambiando collegamento si riparte da una conversazione nuova.
     apiChat.reset();
     subscriptionChat.reset();
@@ -448,7 +512,12 @@ async function relatedNotesContext(question, skipRel) {
   }
   notes = notes.filter((n) => n.rel !== skipRel);
   if (!notes.length) return { text: '', used: [] };
-  const body = notes
+  const used = notes.map((n) => ({ rel: n.rel, title: n.title }));
+  // Le note già mandate in questa conversazione (e non cambiate) Claude le ha già: non le rimando.
+  const fresh = notes.filter((n) => sentNotes.get(n.rel) !== digest(n.text));
+  if (!fresh.length) return { text: '', used, fresh: [] };
+  for (const n of fresh) sentNotes.set(n.rel, digest(n.text));
+  const body = fresh
     .map((n) => {
       const text = n.text.length > NOTE_CONTEXT_LIMIT ? `${n.text.slice(0, NOTE_CONTEXT_LIMIT)}\n[… nota troncata …]` : n.text;
       return `<nota titolo="${n.title.replace(/"/g, "'")}" percorso="${n.rel.replace(/"/g, "'")}">\n${text}\n</nota>`;
@@ -458,9 +527,13 @@ async function relatedNotesContext(question, skipRel) {
     text:
       '<note_utente>\nQueste sono le note dell\'utente. Resta coerente con quello che c\'è scritto; ' +
       `se una nota è sbagliata o incompleta dillo.\n\n${body}\n</note_utente>`,
-    used: notes.map((n) => ({ rel: n.rel, title: n.title })),
+    used,
+    fresh: fresh.map((n) => n.rel),
   };
 }
+
+const sentNotes = new Map(); // percorso → impronta della nota già inviata in questa conversazione
+const digest = (text) => require('crypto').createHash('sha1').update(text).digest('hex');
 
 // ------------------------------------------------------------------------ IPC
 
@@ -514,6 +587,8 @@ ipcMain.handle('chat:send', async (e, { text, contextRel, images }) => {
     (delta) => send('chat:delta', delta),
     (status) => send('chat:status', status)
   );
+  // Se la domanda non è andata a buon fine, quelle note non sono nella conversazione.
+  if (!result.ok) for (const rel of related.fresh || []) sentNotes.delete(rel);
   return { ...result, usedNotes: related.used };
 });
 
@@ -539,6 +614,7 @@ ipcMain.on('chat:abort', () => {
 });
 ipcMain.on('chat:reset', () => {
   cancelledUpTo = sendSeq;
+  sentNotes.clear();
   apiChat.reset();
   subscriptionChat.reset();
 });

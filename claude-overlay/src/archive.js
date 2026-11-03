@@ -30,6 +30,9 @@ const SCRIPT_HOWTO = 'Script - Come lanciare uno script';
 const LONG_SCRIPT_LINES = 40;
 const MAX_TITLE = 80;
 const MAX_PATH = 250;
+const MAX_TREE_TITLES = 250; // titoli al massimo nel prompt di classificazione
+// Saluti e conferme: non serve chiamare il modello per sapere che non vanno archiviati.
+const SMALL_TALK = /^(grazie( mille| tante)?|ok(ay)?|perfetto|ciao|va bene|ottimo|top|capito|thanks|thank you)[\s!.,?]*$/i;
 
 // ------------------------------------------------------------------ prompt
 
@@ -44,6 +47,7 @@ Azioni, una per ogni argomento distinto:
 - "salta": chiacchiere, ringraziamenti, domande non tecniche, o contenuto già presente identico nel vault. Non si scrive niente.
 - "unisci": esiste già una nota sullo stesso argomento (stesso comando o stesso problema). Cercala in tutta la materia, non solo nella categoria scelta. In "nota_esistente" metti il suo percorso: "6 - Atomic Notes/{Materia}/{NN Categoria}/{Titolo}.md".
 - "nuova": argomento nuovo.
+Nell'albero, le categorie lontane dalla domanda mostrano solo il numero di note: per "unisci" usa solo note di cui vedi il titolo (nell'albero o tra le note simili).
 Se la risposta tratta argomenti diversi (es. tre comandi diversi), restituisci un oggetto per argomento: una nota per argomento.
 
 Categorie e materie:
@@ -457,12 +461,16 @@ class Archivist {
     const answer = normalizeNewlines(job.answer || '').trim();
     const images = Array.isArray(job.images) ? job.images : [];
     const result = { ok: true, opId: op.id, items: [], rough: false, skipped: false };
+    if (job.kind !== 'nota' && SMALL_TALK.test(question)) {
+      result.skipped = true;
+      return this.finish(op, result);
+    }
 
     try {
       const tree = await this.scanTree();
       const vault = this.getVault();
       const related = await vault
-        .relevant(`${question}\n${answer}`, 5, [DIRS.rough, DIRS.template, DIRS.source, DIRS.tags, DIRS.indexes])
+        .relevant(`${question}\n${answer.slice(0, 1500)}`, 5, [DIRS.rough, DIRS.template, DIRS.source, DIRS.tags, DIRS.indexes])
         .catch(() => []);
       const { text: answerForModel, scripts } = extractLongScripts(answer);
 
@@ -535,7 +543,7 @@ class Archivist {
       result.opId = null;
     }
     const v = this.getVault();
-    if (v) v.invalidate();
+    if (v) v.markChanged(op.journal.map((e) => e.rel));
     this.pruneBackups().catch(() => {});
     return result;
   }
@@ -855,7 +863,7 @@ class Archivist {
     for (const dir of [...op.createdDirs].reverse()) await fsp.rmdir(dir).catch(() => {}); // solo se vuote
     op.undone = true;
     const v = this.getVault();
-    if (v) v.invalidate();
+    if (v) v.markChanged(op.journal.map((e) => e.rel));
     return { ok: true, skipped };
   }
 }
@@ -940,15 +948,24 @@ function demoteHeadings(text) {
 }
 
 function classifyPrompt({ tree, related, question, answer, previous, images, scripts, kind }) {
+  // Con un vault grande non si mandano tutti i titoli (costano a ogni archiviazione):
+  // solo quelli delle categorie toccate dalle note simili o nominate nella domanda.
+  const total = tree.reduce((n, s) => n + s.categories.reduce((m, c) => m + c.notes.length, 0), 0);
+  const haystack = lc(`${question}\n${answer}`);
+  const focus = new Set(related.map((n) => n.rel.split('/').slice(1, 3).join('/')));
+  let budget = MAX_TREE_TITLES;
+  const catLine = (s, c) => {
+    if (!c.notes.length) return `  ${c.folder}: (vuota)`;
+    const wanted =
+      total <= MAX_TREE_TITLES || focus.has(`${s.name}/${c.folder}`) || haystack.includes(lc(c.name)) || haystack.includes(lc(s.name));
+    if (!wanted || budget <= 0) return `  ${c.folder}: (${c.notes.length} note)`;
+    const shown = c.notes.slice(0, budget);
+    budget -= shown.length;
+    return `  ${c.folder}: ${shown.join(' | ')}${shown.length < c.notes.length ? ' | …' : ''}`;
+  };
   const treeText = tree.length
     ? tree
-        .map(
-          (s) =>
-            `${s.name}\n` +
-            (s.categories.length
-              ? s.categories.map((c) => `  ${c.folder}: ${c.notes.length ? c.notes.join(' | ') : '(vuota)'}`).join('\n')
-              : '  (nessuna categoria)')
-        )
+        .map((s) => `${s.name}\n${s.categories.length ? s.categories.map((c) => catLine(s, c)).join('\n') : '  (nessuna categoria)'}`)
         .join('\n')
     : '(il vault non ha ancora materie)';
   const parts = [`<albero_vault>\n${treeText}\n</albero_vault>`];

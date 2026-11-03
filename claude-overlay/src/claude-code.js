@@ -21,7 +21,17 @@ const BASE_SYSTEM = [
 ].join('\n');
 
 /** Trova l'eseguibile di Claude Code. */
+const foundClaude = new Map();
 function findClaude(custom) {
+  const key = custom || '';
+  const hit = foundClaude.get(key);
+  if (hit && fileExists(hit)) return hit;
+  const found = locateClaude(custom);
+  if (found) foundClaude.set(key, found);
+  return found;
+}
+
+function locateClaude(custom) {
   // Un percorso scelto a mano vale da solo: se è sbagliato è meglio dirlo che usarne un altro.
   if (custom) return fileExists(custom) ? custom : null;
   const candidates = [];
@@ -176,7 +186,7 @@ class ClaudeCodeChat {
     if (this.child && this.signature !== signature) this.stop(); // impostazioni cambiate: riparte riprendendo la conversazione
     if (this.child) return;
     // Claude Code riusa le istruzioni registrate all'inizio della conversazione: se cambiano, ne serve una nuova.
-    if (this.promptUsed !== undefined && this.promptUsed !== cfg.systemPrompt) this.sessionId = null;
+    if (this.promptUsed !== undefined && this.promptUsed !== cfg.systemPrompt) this.freshSession();
     this.promptUsed = cfg.systemPrompt;
 
     const exe = findClaude(cfg.claudePath);
@@ -260,7 +270,7 @@ class ClaudeCodeChat {
   retryFresh(p) {
     if (!this.resuming || p.retried || p.text) return false;
     this.stop();
-    this.sessionId = null;
+    this.freshSession();
     this.resuming = false;
     this.send(p.content, p.onText, p.onStatus, true).then(p.resolve);
     return true;
@@ -300,6 +310,11 @@ class ClaudeCodeChat {
   reset() {
     this.abort();
     this.sessionId = null;
+  }
+
+  freshSession() {
+    this.sessionId = null;
+    if (this.onFresh) this.onFresh();
   }
 
   dispose() {

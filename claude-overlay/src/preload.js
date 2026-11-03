@@ -10,6 +10,7 @@ const EVENTS = new Set([
   'config:changed',
   'chat:delta',
   'chat:status',
+  'overlay:peek',
 ]);
 
 contextBridge.exposeInMainWorld('overlay', {
