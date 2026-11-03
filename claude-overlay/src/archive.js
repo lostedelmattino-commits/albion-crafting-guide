@@ -57,10 +57,13 @@ Categorie e materie:
 - Per una categoria nuova scrivi "descrizione_categoria": una frase breve per l'elenco della materia.
 - Materia nuova ("materia_nuova": true) solo per un programma o soggetto che non c'è ancora; scrivi "descrizione_materia" (una frase) e la sua prima categoria.
 
-Titolo: in italiano, descrittivo, nello stile dei titoli esistenti (es. "Guscio interno dopo Extract (isolare e cancellare)"); parentesi per chiarire; al massimo 80 caratteri; senza i caratteri \\ / : * ? " < > | # ^ [ ].
+Titolo: in italiano e orientato all'uso: verbo + scopo, con lo strumento tra parentesi per ritrovarlo (es. "Smussare gli spigoli senza deformare la mesh (Bevel)", "Isolare e cancellare il guscio interno dopo Extract"); al massimo 80 caratteri; senza i caratteri \\ / : * ? " < > | # ^ [ ].
 
 Contenuto (campo "contenuto", Markdown). È una guida, non la chat:
-- Preferisci una tabella a due colonne:
+- Inizia SEMPRE con il riassunto d'uso, su due righe:
+  > [!summary] In breve
+  > a cosa serve, in una frase.
+- Poi preferisci una tabella a due colonne:
   | Vuoi… | Fai così |
   | --- | --- |
   | Cos'è | … |
@@ -69,7 +72,8 @@ Contenuto (campo "contenuto", Markdown). È una guida, non la chat:
   | Limite | … |
   | Flusso | 1) … 2) … 3) … |
   | Non funziona | … |
-  Usa solo le righe che servono, con nomi adatti all'argomento.
+  Usa solo le righe che servono, con nomi adatti all'argomento, ma sempre in quest'ordine: Cos'è → Quando serve → Come si fa (Attivarlo, Flusso) → Scorciatoie → Limite → Non funziona.
+- La prima volta che nomini uno strumento o comando del programma (es. Bevel, Extrude, Extract) scrivilo come link: [[Bevel]].
 - In alternativa, per elenchi di termini o scorciatoie: "- **Termine** – spiegazione."
 - Percorsi dei menu con → (es. Tool → SubTool → Extract). Tasti e nomi di comandi in **grassetto** (es. **Shift+D**).
 - Simboli ammessi: 💡 consiglio · ⚠️ attenzione · ✅ regola di qualità.
@@ -80,10 +84,12 @@ Contenuto (campo "contenuto", Markdown). È una guida, non la chat:
 - Script lunghi (SCRIPT_1…): non copiare il codice. Crea un oggetto con "tipo": "script", "script": "SCRIPT_1", materia "${SCRIPT_SUBJECT}", categoria "${SCRIPT_CATEGORY}", titolo "Script - {cosa fa}", "nome_script" (nome breve della cartella) e "nome_file" (es. "rinomina_oggetti.py"). Nel contenuto spiega a cosa serve e come lanciarlo con un link a [[${SCRIPT_HOWTO}]], e metti {{SCRIPT_1}} dove va il link al file. Gli script brevi restano nel contenuto in un blocco di codice.
 
 "argomento_breve": 1-4 parole sull'argomento (es. "CurveTube"), per la riga riassuntiva dell'indice.
+"scorciatoie": ogni scorciatoia da tastiera citata, come {"tasti": "Ctrl+B", "azione": "cosa fa, breve"}; [] se nessuna.
+"strumenti": i nomi degli strumenti o comandi del programma linkati nel contenuto (es. ["Bevel", "Extrude"]); [] se nessuno.
 "confidenza": da 0 a 1, quanto sei sicuro di azione, materia e categoria.
 
 Rispondi SOLO con un array JSON, senza testo prima o dopo e senza blocchi di codice. Ogni oggetto:
-{"azione": "nuova" | "unisci" | "salta", "tipo": "nota", "materia": "", "categoria": "", "categoria_nuova": false, "materia_nuova": false, "titolo": "", "nota_esistente": "", "descrizione_categoria": "", "descrizione_materia": "", "argomento_breve": "", "confidenza": 0.0, "contenuto": "", "script": "", "nome_script": "", "nome_file": ""}`;
+{"azione": "nuova" | "unisci" | "salta", "tipo": "nota", "materia": "", "categoria": "", "categoria_nuova": false, "materia_nuova": false, "titolo": "", "nota_esistente": "", "descrizione_categoria": "", "descrizione_materia": "", "argomento_breve": "", "confidenza": 0.0, "contenuto": "", "script": "", "nome_script": "", "nome_file": "", "scorciatoie": [], "strumenti": []}`;
 
 const MERGE_SYSTEM = `Unisci un nuovo contenuto a una nota esistente del vault Obsidian dell'utente.
 Restituisci SOLO il testo completo della nota unita: niente blocchi di codice intorno, niente commenti.
@@ -251,6 +257,10 @@ function parseItems(raw) {
       script: String(x.script || '').trim(),
       nomeScript: String(x.nome_script || '').trim(),
       nomeFile: String(x.nome_file || '').trim(),
+      scorciatoie: (Array.isArray(x.scorciatoie) ? x.scorciatoie : [])
+        .filter((k) => k && k.tasti)
+        .map((k) => ({ tasti: String(k.tasti).trim(), azione: String(k.azione || '').trim() })),
+      strumenti: (Array.isArray(x.strumenti) ? x.strumenti : []).map((t) => sanitizeName(t, 50)).filter(Boolean),
     }));
 }
 
@@ -513,6 +523,7 @@ class Archivist {
           const done = await this.writeItem(op, now, item, tree, names, attachments, cfg);
           result.items.push(done);
           log.push(...done.log);
+          await this.updateHubs(op, now, item, done, log).catch(() => {}); // scorciatoie e strumenti: mai bloccanti
         } catch (err) {
           const body = await this.withAttachments(op, now, item.contenuto || answer, item.titolo || 'Da sistemare', attachments).catch(() => item.contenuto || answer);
           await this.addRough(op, now, question, body, `Scrittura non riuscita: ${err.message}`);
@@ -787,6 +798,72 @@ class Archivist {
     }
     const next = lines.join('\n');
     if (next !== text) await this.writeText(op, GUIDE_NOTE, next);
+  }
+
+  // ---------------------------------------------- scorciatoie e strumenti
+
+  /**
+   * Dopo aver scritto una nota: le sue scorciatoie finiscono nella pagina
+   * "4 - Indexes/{Materia} - Scorciatoie.md" (tabella Tasti | Cosa fa | Nota) e la
+   * nota prende quel link nei Tags; gli strumenti citati in almeno 2 note hanno
+   * una pagina "3 - Tags/Strumenti/{Strumento}.md" con tutte le note che li usano.
+   */
+  async updateHubs(op, now, item, done, log) {
+    if (!done.materia || !done.titolo) return;
+    const cell = (t) => String(t).replace(/\|/g, '\\|').replace(/\n/g, ' ');
+    if (item.scorciatoie.length) {
+      const hubName = `${done.materia} - Scorciatoie`;
+      const hubRel = `${DIRS.indexes}/${hubName}.md`;
+      const link = `[[${done.titolo}]]`;
+      let text = (await this.exists(hubRel))
+        ? await this.readText(hubRel)
+        : noteText({
+            date: `${now.date} ${now.time}`,
+            tags: `[[${done.materia}]]`,
+            title: hubName,
+            body: `*Tutte le scorciatoie di ${done.materia}, con la nota dove sono spiegate.*\n\n| Tasti | Cosa fa | Nota |\n| --- | --- | --- |`,
+            refs: `[[${done.materia}]]`,
+          });
+      for (const k of item.scorciatoie) {
+        const row = `| **${cell(k.tasti)}** | ${cell(k.azione)} | ${link} |`;
+        const exists = text.split('\n').some((l) => lc(l).includes(lc(`**${cell(k.tasti)}**`)) && lc(l).includes(lc(link)));
+        if (!exists) text = appendListItem(text, row, (l) => l.trim().startsWith('|'));
+      }
+      await this.writeText(op, hubRel, text);
+      // La nota prende il "tag" della pagina scorciatoie nella riga Tags.
+      const note = await this.readText(done.rel);
+      if (!note.includes(`[[${hubName}]]`)) {
+        await this.writeText(op, done.rel, note.replace(/^Tags: (.*)$/m, (m, t) => `Tags: ${t.trim()} [[${hubName}]]`.replace('Tags:  ', 'Tags: ')));
+      }
+    }
+    if (item.strumenti.length) {
+      const vault = this.getVault();
+      await vault.ensureIndexed().catch(() => {});
+      for (const tool of item.strumenti) {
+        const needle = lc(`[[${tool}`);
+        const users = new Set([done.titolo]);
+        for (const n of vault.notes.values()) {
+          if (n.rel.startsWith(`${DIRS.atomic}/`) && n.text.toLowerCase().includes(needle)) users.add(n.title);
+        }
+        if (users.size < 2) continue; // pagina solo per strumenti usati in almeno 2 note
+        const rel = `${DIRS.tags}/Strumenti/${tool}.md`;
+        let text = (await this.exists(rel))
+          ? await this.readText(rel)
+          : noteText({
+              date: `${now.date} ${now.time}`,
+              tags: done.materia ? `[[${done.materia}]]` : '',
+              title: tool,
+              body: `## Note che lo usano`,
+              refs: done.materia ? `[[${done.materia}]]` : '',
+            });
+        const created = !(await this.exists(rel));
+        for (const t of [...users].sort((a, b) => a.localeCompare(b))) {
+          if (!lc(text).includes(lc(`[[${t}]]`))) text = appendListItem(text, `- [[${t}]]`, (l) => l.startsWith('- [['));
+        }
+        await this.writeText(op, rel, text);
+        if (created) log.push(`🆕 creata pagina strumento [[${tool}]]`);
+      }
+    }
   }
 
   // ------------------------------------------------------------ registro

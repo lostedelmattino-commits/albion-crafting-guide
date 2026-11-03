@@ -121,7 +121,8 @@
       stopCountdown();
       fillSettings();
     } else if (mode === 'notes') {
-      if (search) refreshNotes(0);
+      // Tornando sul tab Note si resta dove eri (nota aperta o risultati); la prima volta cerca.
+      if (search && !state.notes.current && !state.notes.results.length) refreshNotes(0);
     } else if (mode === 'chat') {
       setView(chatLog.children.length && state.view !== 'compact' ? state.view : 'compact');
     }
@@ -223,6 +224,7 @@
     setGhostClass(false);
     if (state.mode === 'settings') setMode(state.modeBeforeSettings);
     closeNote();
+    state.notes.results = []; // alla prossima apertura le note recenti si ricaricano
     setView('compact');
   }
 
@@ -892,6 +894,14 @@
     state.notes.hits = [];
   }
 
+  function notesHome() {
+    input.value = '';
+    autoGrow();
+    closeNote();
+    stopCountdown();
+    refreshNotes(0);
+  }
+
   // ← nella nota: alla nota precedente se ci sei arrivato da un link, altrimenti ai risultati.
   function noteBack() {
     const prev = state.notes.history.pop();
@@ -1266,6 +1276,7 @@
   document.querySelectorAll('.tab').forEach((t) =>
     t.addEventListener('click', () => {
       if (t.dataset.mode !== state.mode) setMode(t.dataset.mode);
+      else if (t.dataset.mode === 'notes') notesHome(); // secondo clic su «Note»: torna all'inizio
       input.focus();
     })
   );
