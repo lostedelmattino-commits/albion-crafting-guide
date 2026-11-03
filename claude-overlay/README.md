@@ -8,6 +8,7 @@ Un pop-up flottante e semitrasparente per Windows: lo richiami con una scorciato
 
 **Chat con Claude** (`Ctrl+Shift+Spazio`)
 - Compare nell'angolo che scegli (di default in basso a destra) come una barra compatta e semitrasparente.
+- **Spostalo** trascinandolo dalla barra in alto (dove ci sono «Claude» e «Note»): la posizione viene ricordata anche dopo averlo chiuso o riavviato il PC. Si allarga sempre verso il centro dello schermo. **Doppio clic** sulla barra per rimetterlo nell'angolo scelto nelle impostazioni.
 - Scrivi e premi Invio: la risposta arriva in streaming in un'anteprima leggermente espansa, nello stesso angolo.
 - Clicca sulla risposta (o su ⤢) per espanderla: diventa più grande e scorrevole, con tutta la conversazione.
 - Dopo la risposta il pop-up resta visibile per qualche secondo (barra arancione sotto l'intestazione) e poi sparisce. Se ci passi sopra con il mouse il conto alla rovescia si ferma.
@@ -84,7 +85,7 @@ Dall'icona ⚙ nel pop-up, oppure dal menu dell'icona nell'area di notifica:
 
 | Impostazione | Default | Note |
 |---|---|---|
-| Posizione | In basso a destra | Anche in alto, e a sinistra. Si cambia al volo dal menu dell'icona. |
+| Posizione | In basso a destra | Anche in alto, e a sinistra. Si cambia al volo dal menu dell'icona. Scegliere un angolo annulla la posizione trascinata. |
 | Opacità sfondo | 86% | Anteprima dal vivo mentre muovi il cursore. |
 | Opacità modalità fantasma | 60% | |
 | Apri le note in modalità fantasma | no | |

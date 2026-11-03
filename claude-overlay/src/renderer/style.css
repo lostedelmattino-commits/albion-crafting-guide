@@ -102,6 +102,9 @@ button { font: inherit; color: inherit; }
   padding: 6px 6px 4px 8px;
   min-height: 38px;
 }
+.bar { cursor: grab; user-select: none; touch-action: none; }
+.panel.dragging .bar { cursor: grabbing; }
+.panel.dragging { box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5); }
 .view-compact.mode-chat .bar,
 .view-compact.mode-notes .bar { padding-bottom: 0; }
 

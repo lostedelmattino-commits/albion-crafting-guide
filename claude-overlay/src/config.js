@@ -8,6 +8,9 @@ const path = require('path');
 
 const DEFAULTS = {
   corner: 'bottom-right', // bottom-right | bottom-left | top-right | top-left
+  // Posizione scelta trascinando il pop-up: il punto (in coordinate dello schermo) dell'angolo
+  // della finestra che resta fermo quando si allarga. null = attaccato all'angolo dello schermo.
+  customAnchor: null,
   margin: 18,
   width: 440,
   expandedWidth: 580,
@@ -95,7 +98,7 @@ function publicView() {
 function update(patch) {
   const c = load();
   for (const [k, v] of Object.entries(patch || {})) {
-    if (!PUBLIC_KEYS.includes(k)) continue;
+    if (!PUBLIC_KEYS.includes(k) || k === 'customAnchor') continue; // si cambia solo con setAnchor
     const def = DEFAULTS[k];
     if (typeof def === 'number') {
       const n = Number(v);
@@ -141,6 +144,17 @@ function setApiKey(key) {
   persist();
 }
 
+function setAnchor(anchor) {
+  const c = load();
+  const valid =
+    anchor &&
+    ['bottom-right', 'bottom-left', 'top-right', 'top-left'].includes(anchor.corner) &&
+    Number.isFinite(anchor.x) &&
+    Number.isFinite(anchor.y);
+  c.customAnchor = valid ? { corner: anchor.corner, x: Math.round(anchor.x), y: Math.round(anchor.y) } : null;
+  persist();
+}
+
 function getApiKey() {
   const c = load();
   if (c.apiKeyEnc) {
@@ -159,4 +173,4 @@ function clamp(n, lo, hi) {
   return Math.min(hi, Math.max(lo, n));
 }
 
-module.exports = { get, publicView, update, setApiKey, getApiKey, DEFAULTS };
+module.exports = { get, publicView, update, setApiKey, getApiKey, setAnchor, DEFAULTS };

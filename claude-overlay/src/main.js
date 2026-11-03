@@ -162,22 +162,58 @@ function currentWorkArea() {
   return workArea;
 }
 
+// Con una posizione trascinata si usa il monitor dove è stato lasciato il pop-up,
+// altrimenti quello dove si trova il mouse.
+function targetWorkArea() {
+  const a = config.get().customAnchor;
+  if (a) return screen.getDisplayNearestPoint({ x: a.x, y: a.y }).workArea;
+  return currentWorkArea();
+}
+
 function place() {
   if (!win) return;
   const c = config.get();
-  const wa = currentWorkArea();
+  const a = c.customAnchor;
+  const wa = targetWorkArea();
   const m = c.margin;
   const w = Math.max(200, Math.min(size.w, wa.width - 2 * m));
   const h = Math.max(60, Math.min(size.h, wa.height - 2 * m));
-  const x = c.corner.endsWith('right') ? wa.x + wa.width - w - m : wa.x + m;
-  const y = c.corner.startsWith('bottom') ? wa.y + wa.height - h - m : wa.y + m;
+  let x;
+  let y;
+  if (a) {
+    // L'angolo "agganciato" resta fermo: la finestra si allarga verso il centro dello schermo.
+    x = a.corner.endsWith('right') ? a.x - w : a.x;
+    y = a.corner.startsWith('bottom') ? a.y - h : a.y;
+    x = Math.min(Math.max(x, wa.x), wa.x + wa.width - w);
+    y = Math.min(Math.max(y, wa.y), wa.y + wa.height - h);
+  } else {
+    x = c.corner.endsWith('right') ? wa.x + wa.width - w - m : wa.x + m;
+    y = c.corner.startsWith('bottom') ? wa.y + wa.height - h - m : wa.y + m;
+  }
   win.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.round(w), height: Math.round(h) });
+}
+
+/** Dopo un trascinamento: salva da quale angolo si allarga il pop-up e dove si trova. */
+function saveDraggedPosition() {
+  const b = win.getBounds();
+  const wa = screen.getDisplayMatching(b).workArea;
+  const right = b.x + b.width / 2 > wa.x + wa.width / 2;
+  const bottom = b.y + b.height / 2 > wa.y + wa.height / 2;
+  config.setAnchor({
+    corner: `${bottom ? 'bottom' : 'top'}-${right ? 'right' : 'left'}`,
+    x: right ? b.x + b.width : b.x,
+    y: bottom ? b.y + b.height : b.y,
+  });
+  place();
+  updateTray();
+  if (win) win.webContents.send('config:changed', { config: publicConfig(), layout: layoutInfo() });
 }
 
 function layoutInfo() {
   const c = config.get();
-  const wa = currentWorkArea();
-  return { corner: c.corner, maxHeight: wa.height - 2 * c.margin, maxWidth: wa.width - 2 * c.margin };
+  const wa = targetWorkArea();
+  // Con una posizione trascinata conta l'angolo agganciato; "corner" resta l'angolo di ritorno.
+  return { corner: c.customAnchor ? c.customAnchor.corner : c.corner, maxHeight: wa.height - 2 * c.margin, maxWidth: wa.width - 2 * c.margin };
 }
 
 // ------------------------------------------------------------ mostra/nascondi
@@ -276,7 +312,10 @@ function updateTray() {
         label,
         type: 'radio',
         checked: c.corner === id,
-        click: () => applyConfig({ corner: id }),
+        click: () => {
+          config.setAnchor(null); // scegliere un angolo annulla la posizione trascinata
+          applyConfig({ corner: id });
+        },
       })),
     },
     {
@@ -307,6 +346,7 @@ function applyConfig(patch, apiKey) {
   const before = { ...config.get() };
   const c = config.update(patch);
   if (apiKey !== undefined && apiKey !== null) config.setApiKey(apiKey);
+  if (c.corner !== before.corner && before.customAnchor) config.setAnchor(null);
   if (c.vaultPath !== before.vaultPath) vault = new Vault(c.vaultPath);
   if (c.backend !== before.backend) {
     // Cambiando collegamento si riparte da una conversazione nuova.
@@ -528,6 +568,27 @@ ipcMain.on('win:resize', (_e, { w, h }) => {
 });
 
 ipcMain.on('win:hide', () => hideOverlay());
+
+// Trascinamento dalla barra in alto (gestito qui per controllare posizione e memoria).
+let dragStart = null;
+ipcMain.on('win:drag-start', () => {
+  if (win) dragStart = win.getBounds();
+});
+ipcMain.on('win:drag-move', (_e, { dx, dy }) => {
+  if (!win || !dragStart || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
+  win.setBounds({ ...dragStart, x: Math.round(dragStart.x + dx), y: Math.round(dragStart.y + dy) });
+});
+ipcMain.on('win:drag-end', () => {
+  if (!win || !dragStart) return;
+  dragStart = null;
+  saveDraggedPosition();
+});
+ipcMain.on('win:reset-position', () => {
+  config.setAnchor(null);
+  workArea = null;
+  place();
+  if (win) win.webContents.send('config:changed', { config: publicConfig(), layout: layoutInfo() });
+});
 ipcMain.on('win:ghost', (_e, on) => setGhost(on));
 ipcMain.on('win:ignore-mouse', (_e, ignore) => {
   if (win && ghost) win.setIgnoreMouseEvents(Boolean(ignore), { forward: true });
