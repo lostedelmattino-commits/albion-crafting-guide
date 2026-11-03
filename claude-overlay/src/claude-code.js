@@ -175,10 +175,14 @@ class ClaudeCodeChat {
     const signature = JSON.stringify([cfg.claudePath, cfg.ccModel, cfg.effort, cfg.webSearch, cfg.systemPrompt]);
     if (this.child && this.signature !== signature) this.stop(); // impostazioni cambiate: riparte riprendendo la conversazione
     if (this.child) return;
+    // Claude Code riusa le istruzioni registrate all'inizio della conversazione: se cambiano, ne serve una nuova.
+    if (this.promptUsed !== undefined && this.promptUsed !== cfg.systemPrompt) this.sessionId = null;
+    this.promptUsed = cfg.systemPrompt;
 
     const exe = findClaude(cfg.claudePath);
     if (!exe) throw new Error(NOT_FOUND);
     const args = this.argsFor(cfg);
+    this.resuming = Boolean(this.sessionId);
     if (this.sessionId) args.push('--resume', this.sessionId);
 
     const child = launch(exe, args, {
@@ -210,7 +214,6 @@ class ClaudeCodeChat {
       return; // righe non JSON (log): ignorate
     }
     const p = this.pending;
-    if (msg.session_id) this.sessionId = msg.session_id;
 
     if (msg.type === 'rate_limit_event') {
       this.rateLimit = msg.rate_limit_info || null;
@@ -241,12 +244,26 @@ class ClaudeCodeChat {
       this.pending = null;
       this.touch();
       if (msg.is_error || msg.subtype !== 'success') {
+        if (this.retryFresh(p)) return;
         const detail = msg.result || (Array.isArray(msg.errors) ? msg.errors.join('\n') : '') || msg.subtype;
         p.resolve({ ok: false, error: friendlyError(detail, this.rateLimit) });
       } else {
+        // La sessione esiste davvero solo dopo una risposta riuscita: solo allora la si può riprendere.
+        if (msg.session_id) this.sessionId = msg.session_id;
+        this.resuming = false;
         p.resolve({ ok: true, text: p.text || msg.result || '', stopReason: msg.stop_reason });
       }
     }
+  }
+
+  /** Se la ripresa di una conversazione fallisce (es. sessione non trovata), riprova da capo una volta. */
+  retryFresh(p) {
+    if (!this.resuming || p.retried || p.text) return false;
+    this.stop();
+    this.sessionId = null;
+    this.resuming = false;
+    this.send(p.content, p.onText, p.onStatus, true).then(p.resolve);
+    return true;
   }
 
   onExit(child, reason) {
@@ -255,6 +272,7 @@ class ClaudeCodeChat {
     clearTimeout(this.idleTimer);
     const p = this.pending;
     this.pending = null;
+    if (p && this.retryFresh(p)) return;
     if (p) p.resolve({ ok: false, error: friendlyError(reason, this.rateLimit) });
   }
 
@@ -288,7 +306,7 @@ class ClaudeCodeChat {
     this.abort();
   }
 
-  send(content, onText, onStatus) {
+  send(content, onText, onStatus, retried = false) {
     if (this.pending) this.abort();
     try {
       this.ensureProcess();
@@ -296,7 +314,7 @@ class ClaudeCodeChat {
       return Promise.resolve({ ok: false, error: err.message });
     }
     return new Promise((resolve) => {
-      this.pending = { resolve, onText, onStatus, text: '', needSep: false };
+      this.pending = { resolve, onText, onStatus, content, retried, text: '', needSep: false };
       const line = JSON.stringify({ type: 'user', message: { role: 'user', content } });
       this.child.stdin.write(`${line}\n`);
     });

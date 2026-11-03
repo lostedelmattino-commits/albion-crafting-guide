@@ -17,6 +17,7 @@ class Vault {
     this.notes = new Map();
     this.lastScan = 0;
     this.scanning = null;
+    this.generation = 0; // cresce a ogni invalidate(): una scansione già partita non conta più
   }
 
   get name() {
@@ -35,6 +36,7 @@ class Vault {
   }
 
   async scan() {
+    const generation = this.generation;
     const seen = new Set();
     const walk = async (dir) => {
       let entries;
@@ -76,7 +78,8 @@ class Vault {
     });
     await walk(this.root);
     for (const rel of [...this.notes.keys()]) if (!seen.has(rel)) this.notes.delete(rel);
-    this.lastScan = Date.now();
+    // Se nel frattempo qualcuno ha scritto nel vault, l'indice va rifatto alla prossima richiesta.
+    this.lastScan = generation === this.generation ? Date.now() : 0;
   }
 
   /** Ricerca per titolo, percorso e contenuto. Query vuota = note modificate di recente. */
@@ -121,7 +124,7 @@ class Vault {
   }
 
   async read(rel) {
-    await this.ensureIndexed();
+    if (!this.root) throw new Error('Cartella del vault non impostata (⚙ → Vault Obsidian).');
     const full = this.safePath(rel);
     const text = await fsp.readFile(full, 'utf8');
     const name = path.basename(full, '.md');
@@ -173,12 +176,13 @@ class Vault {
 
   /** Tutti i nomi di nota (senza .md, minuscoli): Obsidian collega le note per nome. */
   async noteNames() {
-    await this.ensureIndexed(true);
+    await this.ensureIndexed();
     return new Set([...this.notes.values()].map((n) => n.title.toLowerCase()));
   }
 
   invalidate() {
     this.lastScan = 0;
+    this.generation++;
   }
 
   /** Percorso di un allegato (es. immagine di ![[nome.png]]): prima Images/, poi tutto il vault. */

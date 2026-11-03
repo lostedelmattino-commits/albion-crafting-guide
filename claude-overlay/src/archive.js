@@ -293,13 +293,13 @@ class Archivist {
 
   // --------------------------------------------------------------- percorsi
 
-  full(rel) {
+  full(rel, root = this.root) {
     const clean = toPosix(rel);
     if (!clean || clean.split('/').some((p) => p === '..' || p === '.obsidian' || p === '')) {
       throw new Error(`Percorso non consentito: ${rel}`);
     }
-    const full = path.resolve(this.root, ...clean.split('/'));
-    if (!full.startsWith(this.root + path.sep)) throw new Error(`Percorso fuori dal vault: ${rel}`);
+    const full = path.resolve(root, ...clean.split('/'));
+    if (!full.startsWith(root + path.sep)) throw new Error(`Percorso fuori dal vault: ${rel}`);
     return full;
   }
 
@@ -341,12 +341,10 @@ class Archivist {
   async backup(rel, data) {
     const { date, hms } = romeNow();
     let dest = path.join(this.backupRoot, date, ...toPosix(rel).split('/'));
-    try {
-      await fsp.access(dest);
-      const ext = path.extname(dest);
-      dest = `${dest.slice(0, dest.length - ext.length)} ~${hms}${ext}`;
-    } catch {
-      // primo backup di oggi per questo file
+    const ext = path.extname(dest);
+    const stem = dest.slice(0, dest.length - ext.length);
+    for (let n = 1; await fsp.access(dest).then(() => true, () => false); n++) {
+      dest = `${stem} ~${hms}${n > 1 ? `-${n}` : ''}${ext}`; // più backup dello stesso file nello stesso giorno
     }
     await fsp.mkdir(path.dirname(dest), { recursive: true });
     await fsp.writeFile(dest, data);
@@ -358,9 +356,9 @@ class Archivist {
     const full = this.full(rel);
     let before = null;
     try {
-      before = normalizeNewlines(await fsp.readFile(full, 'utf8'));
-    } catch {
-      before = null;
+      before = await fsp.readFile(full); // byte originali: Annulla li rimette identici
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err; // file bloccato: meglio fermarsi che sovrascrivere senza backup
     }
     if (before !== null) await this.backup(rel, before);
     const entry = op.journal.find((e) => e.rel === rel);
@@ -373,7 +371,8 @@ class Archivist {
   async writeBinary(op, rel, buffer) {
     rel = toPosix(rel);
     const full = this.full(rel);
-    op.journal.push({ rel, before: null, after: buffer });
+    // Per Annulla basta l'impronta del file scritto: le immagini non restano in memoria.
+    op.journal.push({ rel, before: null, afterHash: crypto.createHash('sha1').update(buffer).digest('hex') });
     await this.ensureDir(op, path.dirname(full));
     await this.atomicWrite(full, buffer);
   }
@@ -452,8 +451,8 @@ class Archivist {
   async archiveNow(job) {
     if (!this.root) return { ok: false, error: 'Cartella del vault non impostata (⚙ → Vault Obsidian).' };
     const cfg = this.getConfig();
-    const op = { id: crypto.randomUUID(), journal: [], createdDirs: [], undone: false };
     const now = romeNow();
+    const op = { id: crypto.randomUUID(), journal: [], createdDirs: [], undone: false, now, root: this.root };
     const question = String(job.question || '').trim();
     const answer = normalizeNewlines(job.answer || '').trim();
     const images = Array.isArray(job.images) ? job.images : [];
@@ -507,7 +506,8 @@ class Archivist {
           result.items.push(done);
           log.push(...done.log);
         } catch (err) {
-          await this.addRough(op, now, question, item.contenuto || answer, `Scrittura non riuscita: ${err.message}`);
+          const body = await this.withAttachments(op, now, item.contenuto || answer, item.titolo || 'Da sistemare', attachments).catch(() => item.contenuto || answer);
+          await this.addRough(op, now, question, body, `Scrittura non riuscita: ${err.message}`);
           result.rough = true;
         }
       }
@@ -527,10 +527,10 @@ class Archivist {
   }
 
   finish(op, result) {
-    if (result.rough) result.roughRel = this.roughRel(romeNow());
+    if (result.rough) result.roughRel = this.roughRel(op.now || romeNow());
     if (op.journal.length) {
       this.ops.set(op.id, op);
-      if (this.ops.size > 50) this.ops.delete(this.ops.keys().next().value);
+      if (this.ops.size > 20) this.ops.delete(this.ops.keys().next().value);
     } else {
       result.opId = null;
     }
@@ -571,14 +571,14 @@ class Archivist {
     }
 
     // Materia e categoria (create se servono, senza chiedere).
-    let subject = tree.find((s) => lc(s.name) === lc(item.materia));
+    let subject = tree.find((s) => lc(s.name) === lc(sanitizeName(item.materia, 60)));
     if (!subject) {
       const name = sanitizeName(item.materia, 60);
       if (!name) throw new Error('Materia mancante.');
       subject = await this.createSubject(op, now, name, item.descrizioneMateria, tree);
       log.push(`🆕 creata materia [[${subject.name}]]`);
     }
-    let category = subject.categories.find((c) => lc(c.name) === lc(item.categoria));
+    let category = subject.categories.find((c) => lc(c.name) === lc(sanitizeName(item.categoria, 50)));
     if (!category) {
       const name = sameNameElsewhere(tree, item.categoria) || sanitizeName(item.categoria, 50);
       if (!name) throw new Error('Categoria mancante.');
@@ -594,7 +594,7 @@ class Archivist {
       // Esiste già una nota con lo stesso nome: si unisce lì invece di duplicarla.
       return this.mergeInto(op, now, item, sameTitle, attachments, cfg);
     }
-    if (names.has(lc(title))) title = uniqueTitle(`${title} (${subject.name})`, names);
+    if (names.has(lc(title))) title = uniqueTitle(title, `(${subject.name})`, names);
     const folderRel = `${DIRS.atomic}/${subject.name}/${category.folder}`;
     title = fitPath(this.root, folderRel, title);
     names.add(lc(title));
@@ -635,6 +635,12 @@ class Archivist {
       merged = tidy(merged);
     } catch {
       merged = null;
+    }
+    const current = await this.readText(target.rel);
+    if (current !== original) {
+      // Modificata mentre il modello univa: tengo le modifiche e aggiungo in fondo.
+      await this.writeText(op, target.rel, insertBeforeReferences(current, [`## Aggiunta ${now.date}`, '', addition]));
+      return { action: 'aggiornata', materia: target.subject, categoria: target.category, titolo: target.title, rel: target.rel, log: [`✏️ aggiornata [[${target.title}]]`] };
     }
     const dateLine = original.split('\n').find((l) => l.trim());
     const ok =
@@ -799,7 +805,7 @@ class Archivist {
     const block = [`### ${now.time} – ${head}`, ''];
     if (reason) block.push(`> ${reason}`, '');
     if (question) block.push(`**Domanda:** ${question}`, '');
-    block.push(String(content || '').trim() || '(vuoto)');
+    block.push(demoteHeadings(String(content || '').trim()) || '(vuoto)');
     text = addToSection(text, 'Da sistemare', block, true);
     await this.writeText(op, this.roughRel(now), text);
   }
@@ -813,15 +819,22 @@ class Archivist {
     const skipped = [];
     const { date } = romeNow();
     for (const entry of [...op.journal].reverse()) {
-      const full = this.full(entry.rel);
+      const full = this.full(entry.rel, op.root); // il vault di allora, anche se poi è cambiato
       let current = null;
       try {
         current = await fsp.readFile(full);
-      } catch {
-        current = null;
+      } catch (err) {
+        if (err.code !== 'ENOENT') {
+          skipped.push(entry.rel); // non leggibile ora (bloccato): lo lascio com'è
+          continue;
+        }
       }
-      const after = Buffer.isBuffer(entry.after) ? entry.after : Buffer.from(String(entry.after), 'utf8');
-      if (current !== null && !current.equals(after)) {
+      const same =
+        current === null ||
+        (entry.afterHash
+          ? crypto.createHash('sha1').update(current).digest('hex') === entry.afterHash
+          : current.equals(Buffer.isBuffer(entry.after) ? entry.after : Buffer.from(String(entry.after), 'utf8')));
+      if (!same) {
         skipped.push(entry.rel); // modificato dopo (es. in Obsidian): non lo tocco
         continue;
       }
@@ -876,10 +889,15 @@ function sameNameElsewhere(tree, name) {
   return null;
 }
 
-function uniqueTitle(base, names) {
-  let title = sanitizeName(base);
-  for (let n = 2; names.has(lc(title)); n++) title = sanitizeName(`${base} ${n}`);
-  return title;
+function uniqueTitle(title, suffix, names) {
+  // Il suffisso si aggiunge DOPO aver accorciato il titolo, altrimenti il taglio a 80
+  // caratteri lo toglierebbe di nuovo e il ciclo non finirebbe mai.
+  for (let n = 1; n < 1000; n++) {
+    const tail = n === 1 ? ` ${suffix}` : ` ${suffix} ${n}`;
+    const candidate = `${sanitizeName(title, MAX_TITLE - tail.length)}${tail}`;
+    if (!names.has(lc(candidate))) return candidate;
+  }
+  return `${sanitizeName(title, MAX_TITLE - 12)} ${Date.now()}`;
 }
 
 function fitPath(root, folderRel, title) {
@@ -893,8 +911,10 @@ function addToSection(text, heading, blockLines, spaced) {
   const start = lines.findIndex((l) => l.trim() === `## ${heading}`);
   if (start < 0) return insertBeforeReferences(text, [`## ${heading}`, '', ...blockLines]);
   let end = lines.length;
+  let fence = false;
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^#{1,2} /.test(lines[i])) {
+    if (/^\s*(```|~~~)/.test(lines[i])) fence = !fence; // i "# commento" nel codice non sono titoli
+    if (!fence && /^#{1,2} /.test(lines[i])) {
       end = i;
       break;
     }
@@ -905,6 +925,18 @@ function addToSection(text, heading, blockLines, spaced) {
   if (at === start + 1) insert.unshift('');
   lines.splice(at, 0, ...insert);
   return tidy(lines.join('\n'));
+}
+
+/** I titoli "#"/"##" di un testo incollato diventano "####", fuori dai blocchi di codice. */
+function demoteHeadings(text) {
+  let fence = false;
+  return text
+    .split('\n')
+    .map((l) => {
+      if (/^\s*(```|~~~)/.test(l)) fence = !fence;
+      return !fence && /^#{1,3} /.test(l) ? `#### ${l.replace(/^#+ /, '')}` : l;
+    })
+    .join('\n');
 }
 
 function classifyPrompt({ tree, related, question, answer, previous, images, scripts, kind }) {

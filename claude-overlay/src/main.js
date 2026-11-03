@@ -65,6 +65,8 @@ const archivist = new Archivist({
   backupRoot: path.join(app.getPath('appData'), 'ClaudeOverlay', 'backups'),
 });
 let hotkeyFailures = [];
+let sendSeq = 0; // numero dell'ultima domanda inviata
+let cancelledUpTo = 0; // domande fino a questo numero sono state annullate
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -75,6 +77,11 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on('window-all-closed', () => {
   // L'app vive nella barra di sistema: non si chiude con la finestra.
+});
+
+let quitting = false;
+app.on('before-quit', () => {
+  quitting = true;
 });
 
 app.on('will-quit', () => {
@@ -112,6 +119,7 @@ function start() {
 
 async function needsSetup() {
   const c = config.get();
+  if (!c.vaultPath && c.autoArchive) return true; // serve il vault per archiviare
   if (c.backend === 'api') return !config.getApiKey() && !process.env.ANTHROPIC_API_KEY;
   return !(await checkClaudeCode(c.claudePath)).ok;
 }
@@ -146,6 +154,12 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  // Alt+F4 sul pop-up lo nasconde soltanto: l'app resta nell'area di notifica.
+  win.on('close', (e) => {
+    if (quitting) return;
+    e.preventDefault();
+    win.webContents.send('overlay:request-hide');
+  });
 
   // Nessuna navigazione dentro l'overlay: i link si aprono nel browser.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -199,10 +213,12 @@ function saveDraggedPosition() {
   const wa = screen.getDisplayMatching(b).workArea;
   const right = b.x + b.width / 2 > wa.x + wa.width / 2;
   const bottom = b.y + b.height / 2 > wa.y + wa.height / 2;
+  const clampX = (x) => Math.min(Math.max(x, wa.x), wa.x + wa.width - 1);
+  const clampY = (y) => Math.min(Math.max(y, wa.y), wa.y + wa.height - 1);
   config.setAnchor({
     corner: `${bottom ? 'bottom' : 'top'}-${right ? 'right' : 'left'}`,
-    x: right ? b.x + b.width : b.x,
-    y: bottom ? b.y + b.height : b.y,
+    x: clampX(right ? b.x + b.width : b.x),
+    y: clampY(bottom ? b.y + b.height : b.y),
   });
   place();
   updateTray();
@@ -234,6 +250,7 @@ function showOverlay(mode) {
   win.show();
   win.focus();
   currentMode = mode;
+  updateTray();
   if (mode === 'chat' && config.get().backend === 'subscription') subscriptionChat.warm();
   win.webContents.send('overlay:show', { mode, ...layoutInfo() });
 }
@@ -252,6 +269,7 @@ function setGhost(on) {
   // "fantasma" può tornare cliccabile quando ci passi sopra.
   win.setIgnoreMouseEvents(ghost, { forward: true });
   win.setFocusable(!ghost);
+  win.setSkipTaskbar(true); // su Windows setFocusable(true) lo rimetterebbe nella barra delle applicazioni
   win.webContents.send('overlay:ghost', ghost);
   updateTray();
 }
@@ -354,7 +372,11 @@ function applyConfig(patch, apiKey) {
     subscriptionChat.reset();
   }
   if (c.startAtLogin !== before.startAtLogin && (process.platform === 'win32' || process.platform === 'darwin')) {
-    app.setLoginItemSettings({ openAtLogin: c.startAtLogin });
+    // Senza pacchetto (Avvia.cmd / npm start) serve anche la cartella dell'app, altrimenti parte Electron "vuoto".
+    const login = { openAtLogin: c.startAtLogin };
+    if (process.env.PORTABLE_EXECUTABLE_FILE) login.path = process.env.PORTABLE_EXECUTABLE_FILE;
+    else if (!app.isPackaged) login.args = [app.getAppPath()];
+    app.setLoginItemSettings(login);
   }
   let failed = [];
   if (c.hotkeyChat !== before.hotkeyChat || c.hotkeyNotes !== before.hotkeyNotes || c.hotkeyGhost !== before.hotkeyGhost) {
@@ -444,7 +466,13 @@ async function relatedNotesContext(question, skipRel) {
 
 ipcMain.handle('config:get', () => ({ config: publicConfig(), layout: layoutInfo() }));
 
-ipcMain.handle('config:save', (_e, { patch, apiKey }) => applyConfig(patch, apiKey));
+ipcMain.handle('config:save', (_e, { patch, apiKey }) => {
+  try {
+    return { ok: true, ...applyConfig(patch, apiKey) };
+  } catch (err) {
+    return { ok: false, error: `Impostazioni non salvate: ${err.message}`, config: publicConfig(), failedHotkeys: [] };
+  }
+});
 
 ipcMain.handle('vault:pick', async () => {
   const res = await dialog.showOpenDialog(win, {
@@ -456,6 +484,7 @@ ipcMain.handle('vault:pick', async () => {
 
 ipcMain.handle('chat:send', async (e, { text, contextRel, images }) => {
   const question = String(text || '').trim();
+  const mySend = ++sendSeq;
   const parts = [];
   if (contextRel) {
     try {
@@ -465,6 +494,8 @@ ipcMain.handle('chat:send', async (e, { text, contextRel, images }) => {
     }
   }
   const related = await relatedNotesContext(question, contextRel);
+  // Interrotta (Esc / nuova chat) mentre cercavo le note: non la mando.
+  if (cancelledUpTo >= mySend) return { ok: false, aborted: true, error: 'Interrotto.', usedNotes: [] };
   if (related.text) parts.push(related.text);
   parts.push(question);
   const textPart = parts.join('\n\n');
@@ -502,8 +533,12 @@ ipcMain.handle('archive:undo', async (_e, opId) => {
   }
 });
 
-ipcMain.on('chat:abort', () => activeChat().abort());
+ipcMain.on('chat:abort', () => {
+  cancelledUpTo = sendSeq;
+  activeChat().abort();
+});
 ipcMain.on('chat:reset', () => {
+  cancelledUpTo = sendSeq;
   apiChat.reset();
   subscriptionChat.reset();
 });

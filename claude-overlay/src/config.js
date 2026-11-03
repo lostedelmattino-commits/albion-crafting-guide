@@ -103,7 +103,7 @@ function update(patch) {
     const def = DEFAULTS[k];
     if (typeof def === 'number') {
       const n = Number(v);
-      if (Number.isFinite(n)) c[k] = n;
+      if (v !== '' && v !== null && Number.isFinite(n)) c[k] = n; // campo svuotato: resta il valore di prima
     } else if (typeof def === 'boolean') {
       c[k] = Boolean(v);
     } else {

@@ -97,6 +97,7 @@ class OneShot {
         killTree(child);
         finish(reject, new Error('Claude Code non ha risposto in tempo.'));
       }, timeoutMs);
+      child.stdout.setEncoding('utf8'); // non spezza le lettere accentate tra un blocco e l'altro
       child.stdout.on('data', (d) => (out += d));
       child.stderr.on('data', (d) => (err = (err + d).slice(-4000)));
       child.stdin.on('error', () => {});

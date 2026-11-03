@@ -64,7 +64,7 @@
     shell.classList.toggle('anchor-left', String(L.corner).endsWith('left'));
     const css = document.documentElement.style;
     css.setProperty('--alpha', String(c.opacity ?? 0.86));
-    css.setProperty('--ghost-alpha', String(c.ghostOpacity ?? 0.5));
+    css.setProperty('--ghost-alpha', String(c.ghostOpacity ?? 0.6));
     const chrome = 118; // barra + campo di testo + margini
     const maxPanelH = Math.max(260, Math.min(c.expandedHeight || 620, L.maxHeight - 20));
     css.setProperty('--expanded-h', `${maxPanelH - chrome}px`);
@@ -95,6 +95,10 @@
 
   function setMode(mode, { search = true } = {}) {
     if (mode === 'settings' && state.mode !== 'settings') state.modeBeforeSettings = state.mode;
+    if (state.mode === 'settings' && mode !== 'settings') {
+      applyLayout(); // toglie l'anteprima dell'opacità non salvata
+      if (mode === 'notes' && state.modeBeforeSettings === 'notes') search = false; // la nota aperta resta
+    }
     if (state.mode in state.drafts) state.drafts[state.mode] = input.value;
     if (mode in state.drafts && mode !== state.mode) {
       input.value = state.drafts[mode];
@@ -179,7 +183,10 @@
     if (mode !== state.mode || !wasVisible) setMode(mode);
     if (mode === 'chat' && !wasVisible) setView('compact');
     // Chat già fissata: puoi tornare al tuo programma con un clic, il pop-up resta lì.
-    if (!wasVisible && mode === 'chat' && state.config.openPinned) setPinned(true, { silent: true });
+    if (!wasVisible && mode === 'chat' && state.config.openPinned) {
+      setPinned(true, { silent: true });
+      state.autoPinned = true;
+    }
     if (!wasVisible) {
       panel.classList.add('is-hidden');
       requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.remove('is-hidden')));
@@ -237,6 +244,7 @@
 
   function setPinned(on, { silent = false } = {}) {
     state.pinned = Boolean(on);
+    state.autoPinned = false; // da qui in poi la puntina è una scelta dell'utente
     panel.classList.toggle('pinned', state.pinned);
     $('btn-pin').classList.toggle('on', state.pinned);
     $('btn-pin').title = state.pinned
@@ -425,14 +433,14 @@
   function scheduleRender(target, text, turn) {
     streamPending = { target, text, turn };
     if (streamRaf) return;
-    streamRaf = requestAnimationFrame(() => {
+    streamRaf = setTimeout(() => {
       streamRaf = 0;
       const p = streamPending;
       if (!p) return;
       const follow = content.scrollHeight - content.scrollTop - content.clientHeight < 48;
       p.target.innerHTML = Markdown.render(p.text);
       keepInView(p.turn, follow);
-    });
+    }, 120);
   }
 
   // In anteprima resta visibile l'inizio della risposta; espanso segue il testo.
@@ -463,6 +471,14 @@
       updateSendState();
       toast('Archivio l’appunto…');
       const r = await api.archive({ question: '', answer: body, images, kind: 'nota' });
+      if (!r.ok || (!r.items.length && !r.rough)) {
+        // Non salvato (vault mancante, errore, "niente da archiviare"): rimetto il testo nel campo.
+        if (!input.value.trim()) {
+          input.value = text;
+          autoGrow();
+          updateSendState();
+        }
+      }
       return toast(archiveSummary(r), !r.ok);
     }
 
@@ -496,7 +512,7 @@
     );
     off();
     offStatus();
-    if (streamRaf) cancelAnimationFrame(streamRaf);
+    if (streamRaf) clearTimeout(streamRaf);
     streamRaf = 0;
     streamPending = null;
     setStreaming(false);
@@ -734,6 +750,7 @@
 
   function newChat() {
     api.chatReset();
+    state.lastExchange = null;
     chatLog.textContent = '';
     setContext(null);
     setStreaming(false);
@@ -759,6 +776,7 @@
   }
 
   async function runSearch() {
+    searchTimer = 0;
     const q = input.value.trim();
     const seq = ++searchSeq;
     const r = await api.notesSearch(q);
@@ -823,6 +841,7 @@
     setView(state.view === 'expanded' ? 'expanded' : 'preview');
     content.scrollTop = 0;
     // La nota resta per qualche secondo; con la puntina (o in fantasma) resta finché vuoi.
+    if (state.autoPinned) setPinned(false, { silent: true }); // le note restano temporanee anche dalla chat fissata
     if (state.config.notesOpenGhost && !state.ghost) api.setGhost(true);
     else if (!state.pinned) startCountdown(state.config.noteDisplaySeconds || 15);
   }
@@ -918,7 +937,7 @@
         ? 'In uso la variabile ANTHROPIC_API_KEY. Puoi comunque salvarne una qui.'
         : 'Nessuna chiave: creala nella Console Anthropic (platform.claude.com).';
     $('opacity-out').textContent = `${Math.round((c.opacity ?? 0.86) * 100)}%`;
-    $('ghost-out').textContent = `${Math.round((c.ghostOpacity ?? 0.5) * 100)}%`;
+    $('ghost-out').textContent = `${Math.round((c.ghostOpacity ?? 0.6) * 100)}%`;
     $('settings-msg').textContent = '';
     $('settings-msg').classList.remove('error');
     content.scrollTop = 0;
@@ -989,6 +1008,11 @@
     const key = form.elements.apiKey.value.trim();
     const backendBefore = state.config.backend;
     const res = await api.saveConfig(patch, key ? key : undefined);
+    if (!res.ok) {
+      $('settings-msg').textContent = res.error;
+      $('settings-msg').classList.add('error');
+      return;
+    }
     state.config = res.config;
     if (res.config.backend !== backendBefore) newChat(); // conversazione nuova con il nuovo collegamento
     applyLayout();
@@ -999,7 +1023,7 @@
       return;
     }
     toast('Impostazioni salvate');
-    setMode(state.modeBeforeSettings === 'settings' ? 'chat' : state.modeBeforeSettings);
+    setMode(state.modeBeforeSettings);
     input.focus();
   });
 
@@ -1012,7 +1036,7 @@
 
   $('settings-cancel').addEventListener('click', () => {
     applyLayout(); // annulla l'anteprima dell'opacità
-    setMode(state.modeBeforeSettings === 'settings' ? 'chat' : state.modeBeforeSettings);
+    setMode(state.modeBeforeSettings);
     input.focus();
   });
 
@@ -1095,8 +1119,17 @@
       e.preventDefault();
       if (state.mode === 'chat') sendChat();
       else if (state.mode === 'notes') {
-        const n = state.notes.results[state.notes.selected];
-        if (noteView.hidden && n) openNote(n.rel);
+        const openSelected = () => {
+          const n = state.notes.results[state.notes.selected];
+          if (noteView.hidden && n) openNote(n.rel);
+        };
+        if (searchTimer) {
+          clearTimeout(searchTimer);
+          searchTimer = 0;
+          runSearch().then(openSelected);
+        } else {
+          openSelected();
+        }
       }
     } else if (state.mode === 'notes' && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault();
@@ -1111,7 +1144,7 @@
     if (state.streaming) return api.chatAbort();
     if (state.mode === 'settings') {
       applyLayout();
-      return setMode(state.modeBeforeSettings === 'settings' ? 'chat' : state.modeBeforeSettings);
+      return setMode(state.modeBeforeSettings);
     }
     if (state.mode === 'notes' && !noteView.hidden) {
       closeNote();

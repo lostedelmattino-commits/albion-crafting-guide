@@ -44,7 +44,7 @@ Funziona leggendo direttamente la cartella del vault: non serve installare plugi
 
 ## Installazione
 
-Servono Windows 10/11, [Node.js](https://nodejs.org) 20 o successivo e **Claude Code** collegato al tuo account.
+Servono Windows 10/11, [Node.js](https://nodejs.org) 22.12 o successivo (va bene l'ultima versione LTS) e **Claude Code** collegato al tuo account.
 
 **1. Installa Claude Code e fai l'accesso** (una volta sola). In PowerShell:
 

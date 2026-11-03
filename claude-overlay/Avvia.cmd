@@ -10,18 +10,29 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist "node_modules\electron\package.json" (
-  echo Prima installazione: scarico i componenti, puo' servire qualche minuto...
-  call npm install
+rem Electron 45 richiede Node.js 22.12 o successivo.
+node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=12)?0:1)"
+if errorlevel 1 (
+  echo Serve Node.js 22.12 o successivo: aggiornalo da https://nodejs.org ^(versione LTS^).
+  pause
+  exit /b 1
+)
+
+rem Componenti da installare o aggiornare se package.json e' cambiato (es. dopo un aggiornamento).
+fc /b "package.json" "node_modules\.overlay-package.json" >nul 2>nul
+if errorlevel 1 (
+  echo Installo i componenti, puo' servire qualche minuto...
+  call npm install --no-audit --no-fund
   if errorlevel 1 (
     echo Installazione non riuscita: controlla la connessione e riprova.
     pause
     exit /b 1
   )
+  copy /y "package.json" "node_modules\.overlay-package.json" >nul
 )
 
-rem Electron scarica il suo programma solo quando serve: se manca, lo scarica ora.
-if not exist "node_modules\electron\dist\electron.exe" (
+rem Electron scarica il suo programma solo quando serve: path.txt viene scritto alla fine del download.
+if not exist "node_modules\electron\path.txt" (
   echo Scarico Electron, il motore dell'app ^(circa 100 MB^)...
   node "node_modules\electron\install.js"
   if errorlevel 1 (
