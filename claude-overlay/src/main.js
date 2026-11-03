@@ -137,7 +137,7 @@ function createWindow() {
     backgroundColor: '#00000000',
     hasShadow: false,
     resizable: false,
-    movable: false,
+    movable: true, // trascinamento nativo dalla barra in alto (-webkit-app-region: drag)
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
@@ -165,6 +165,11 @@ function createWindow() {
   });
 
   // Nessuna navigazione dentro l'overlay: i link si aprono nel browser.
+  // Fine di un trascinamento fatto dall'utente (Windows/macOS): salva la posizione.
+  // I nostri setBounds non generano 'moved', quindi non serve distinguerli.
+  win.on('moved', () => {
+    if (win.isVisible()) saveDraggedPosition();
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     openExternalSafe(url);
     return { action: 'deny' };
@@ -409,6 +414,11 @@ function updateTray() {
       checked: c.startAtLogin,
       visible: process.platform === 'win32' || process.platform === 'darwin',
       click: (item) => applyConfig({ startAtLogin: item.checked }),
+    },
+    {
+      label: 'Rimetti nell\'angolo',
+      enabled: Boolean(c.customAnchor),
+      click: () => resetPosition(),
     },
     { label: 'Impostazioni…', click: () => showOverlay('settings') },
     { label: 'Apri cartella configurazione', click: () => shell.openPath(app.getPath('userData')) },
@@ -680,26 +690,14 @@ ipcMain.on('win:resize', (_e, { w, h }) => {
 
 ipcMain.on('win:hide', () => hideOverlay());
 
-// Trascinamento dalla barra in alto (gestito qui per controllare posizione e memoria).
-let dragStart = null;
-ipcMain.on('win:drag-start', () => {
-  if (win) dragStart = win.getBounds();
-});
-ipcMain.on('win:drag-move', (_e, { dx, dy }) => {
-  if (!win || !dragStart || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
-  win.setBounds({ ...dragStart, x: Math.round(dragStart.x + dx), y: Math.round(dragStart.y + dy) });
-});
-ipcMain.on('win:drag-end', () => {
-  if (!win || !dragStart) return;
-  dragStart = null;
-  saveDraggedPosition();
-});
-ipcMain.on('win:reset-position', () => {
+function resetPosition() {
   config.setAnchor(null);
   workArea = null;
   place();
+  updateTray();
   if (win) win.webContents.send('config:changed', { config: publicConfig(), layout: layoutInfo() });
-});
+}
+ipcMain.on('win:reset-position', () => resetPosition());
 ipcMain.on('win:ghost', (_e, on) => setGhost(on));
 ipcMain.on('win:ignore-mouse', (_e, ignore) => {
   if (win && ghost) win.setIgnoreMouseEvents(Boolean(ignore), { forward: true });

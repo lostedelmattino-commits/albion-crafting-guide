@@ -34,9 +34,6 @@ contextBridge.exposeInMainWorld('overlay', {
 
   resize: (w, h) => ipcRenderer.send('win:resize', { w, h }),
   hide: () => ipcRenderer.send('win:hide'),
-  dragStart: () => ipcRenderer.send('win:drag-start'),
-  dragMove: (dx, dy) => ipcRenderer.send('win:drag-move', { dx, dy }),
-  dragEnd: () => ipcRenderer.send('win:drag-end'),
   resetPosition: () => ipcRenderer.send('win:reset-position'),
   setGhost: (on) => ipcRenderer.send('win:ghost', on),
   setIgnoreMouse: (ignore) => ipcRenderer.send('win:ignore-mouse', ignore),

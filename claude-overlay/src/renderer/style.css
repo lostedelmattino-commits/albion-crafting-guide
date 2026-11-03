@@ -62,7 +62,7 @@ button { font: inherit; color: inherit; }
   background: rgba(var(--bg-rgb), var(--alpha));
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.38), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.32), 0 1px 0 rgba(255, 255, 255, 0.04) inset; /* resta nei 10px di margine */
   overflow: hidden;
   position: relative;
   transition: opacity 0.16s ease, transform 0.16s ease, border-color 0.2s;
@@ -102,9 +102,9 @@ button { font: inherit; color: inherit; }
   padding: 6px 6px 4px 8px;
   min-height: 38px;
 }
-.bar { cursor: grab; user-select: none; touch-action: none; }
-.panel.dragging .bar { cursor: grabbing; }
-.panel.dragging { box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5); }
+.bar { -webkit-app-region: drag; user-select: none; }
+.bar button, .bar a, .bar input, .bar select { -webkit-app-region: no-drag; }
+.panel.ghost .bar { -webkit-app-region: no-drag; }
 .view-compact.mode-chat .bar,
 .view-compact.mode-notes .bar { padding-bottom: 0; }
 

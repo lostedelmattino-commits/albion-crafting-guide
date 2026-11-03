@@ -1110,6 +1110,9 @@
   }
 
   api.on('config:changed', ({ config, layout }) => {
+    const a = config.customAnchor;
+    const b = state.config.customAnchor;
+    if (a && (!b || a.x !== b.x || a.y !== b.y)) toast('Posizione salvata');
     state.config = config;
     state.layout = { ...state.layout, ...layout };
     applyLayout();
@@ -1197,56 +1200,9 @@
       input.focus();
     })
   );
-  // Trascina il pop-up dalla barra in alto; doppio clic sulla barra = torna nell'angolo.
-  const bar = $('bar');
-  let drag = null;
-  let dragRaf = 0;
-  bar.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || state.ghost || e.target.closest('button, a, input, select')) return;
-    drag = { x: e.screenX, y: e.screenY, started: false, dx: 0, dy: 0 };
-    try {
-      bar.setPointerCapture(e.pointerId);
-    } catch {
-      // puntatore sintetico: va bene lo stesso
-    }
-  });
-  bar.addEventListener('pointermove', (e) => {
-    if (!drag) return;
-    drag.dx = e.screenX - drag.x;
-    drag.dy = e.screenY - drag.y;
-    if (!drag.started) {
-      if (Math.abs(drag.dx) + Math.abs(drag.dy) < 4) return;
-      drag.started = true;
-      panel.classList.add('dragging');
-      stopCountdown();
-      api.dragStart();
-    }
-    if (dragRaf) return;
-    dragRaf = requestAnimationFrame(() => {
-      dragRaf = 0;
-      if (drag) api.dragMove(drag.dx, drag.dy);
-    });
-  });
-  const endDrag = (e) => {
-    if (!drag) return;
-    const started = drag.started;
-    if (started) api.dragMove(drag.dx, drag.dy);
-    drag = null;
-    panel.classList.remove('dragging');
-    try {
-      bar.releasePointerCapture(e.pointerId);
-    } catch {
-      // già rilasciato
-    }
-    if (started) {
-      api.dragEnd();
-      toast('Posizione salvata · doppio clic sulla barra per tornare nell’angolo');
-    }
-  };
-  bar.addEventListener('pointerup', endDrag);
-  bar.addEventListener('pointercancel', endDrag);
-  bar.addEventListener('dblclick', (e) => {
-    if (e.target.closest('button, a, input, select') || !state.config.customAnchor) return;
+  // Il pop-up si trascina dalla barra in alto con il trascinamento nativo di Windows
+  // (vedi .bar in style.css); "Rimetti nell'angolo" sta nelle impostazioni e nel menu dell'icona.
+  $('reset-position').addEventListener('click', () => {
     api.resetPosition();
     toast('Pop-up rimesso nell’angolo');
   });
