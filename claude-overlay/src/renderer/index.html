@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:;">
+  <title>Claude Overlay</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true">
+    <defs>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.8L20 10.7l-6.1 1.9L12 18.5l-1.9-5.9L4 10.7l6.1-1.9z"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+      <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></symbol>
+      <symbol id="i-ghost" viewBox="0 0 24 24"><path d="M9 10h.01M15 10h.01M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+      <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+      <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
+    </defs>
+  </svg>
+
+  <div id="shell" class="shell">
+    <div id="panel" class="panel is-hidden view-compact mode-chat">
+      <header class="bar" id="bar">
+        <div class="tabs" role="tablist" aria-label="Modalità">
+          <button class="tab" role="tab" data-mode="chat" title="Chiedi a Claude">
+            <svg class="ico"><use href="#i-spark"/></svg><span>Claude</span>
+          </button>
+          <button class="tab" role="tab" data-mode="notes" title="Cerca nelle note di Obsidian">
+            <svg class="ico"><use href="#i-book"/></svg><span>Note</span>
+          </button>
+        </div>
+        <div class="bar-status" id="status" aria-live="polite"></div>
+        <div class="bar-actions">
+          <button class="icon-btn only-chat" id="btn-new" title="Nuova conversazione"><svg class="ico"><use href="#i-plus"/></svg></button>
+          <button class="icon-btn" id="btn-expand" title="Espandi / riduci"><svg class="ico ico-expand"><use href="#i-expand"/></svg><svg class="ico ico-collapse"><use href="#i-collapse"/></svg></button>
+          <button class="icon-btn" id="btn-ghost" title="Modalità fantasma: resta visibile ma i clic passano alla finestra sotto"><svg class="ico"><use href="#i-ghost"/></svg></button>
+          <button class="icon-btn" id="btn-pin" title="Fissa: non scompare finché non togli la puntina"><svg class="ico"><use href="#i-pin"/></svg></button>
+          <button class="icon-btn" id="btn-settings" title="Impostazioni"><svg class="ico"><use href="#i-sliders"/></svg></button>
+          <button class="icon-btn" id="btn-close" title="Chiudi (Esc)"><svg class="ico"><use href="#i-x"/></svg></button>
+        </div>
+      </header>
+
+      <div class="timer" id="timer" aria-hidden="true"><div class="timer-fill" id="timer-fill"></div></div>
+
+      <main class="content" id="content">
+        <section class="view" id="view-chat">
+          <button class="older" id="older" hidden></button>
+          <div id="chat-log" class="chat-log"></div>
+        </section>
+
+        <section class="view" id="view-notes">
+          <div id="note-results" class="results" role="listbox" aria-label="Risultati"></div>
+          <article id="note-view" class="note-view" hidden>
+            <div class="note-head">
+              <button class="icon-btn" id="note-back" title="Torna ai risultati"><svg class="ico"><use href="#i-back"/></svg></button>
+              <div class="note-title-wrap">
+                <div class="note-title" id="note-title"></div>
+                <div class="note-folder" id="note-folder"></div>
+              </div>
+              <button class="chip-btn" id="note-ask" title="Fai una domanda a Claude su questa nota"><svg class="ico"><use href="#i-spark"/></svg>Chiedi</button>
+              <button class="icon-btn" id="note-open" title="Apri in Obsidian"><svg class="ico"><use href="#i-external"/></svg></button>
+            </div>
+            <div class="md" id="note-body"></div>
+          </article>
+        </section>
+
+        <section class="view" id="view-settings">
+          <form id="settings" class="settings" autocomplete="off">
+            <h2>Impostazioni</h2>
+
+            <fieldset>
+              <legend>Claude</legend>
+              <label>Chiave API Anthropic
+                <input type="password" name="apiKey" id="set-apikey" placeholder="sk-ant-…" spellcheck="false">
+                <small id="apikey-state"></small>
+              </label>
+              <div class="row">
+                <label>Modello
+                  <select name="model">
+                    <option value="claude-opus-5-5">Claude Opus 5.5</option>
+                    <option value="claude-sonnet-5-5">Claude Sonnet 5.5</option>
+                    <option value="claude-haiku-5-5">Claude Haiku 5.5</option>
+                    <option value="claude-fable-5-1">Claude Fable 5.1</option>
+                  </select>
+                </label>
+                <label>Ragionamento
+                  <select name="effort">
+                    <option value="low">Rapido (low)</option>
+                    <option value="medium">Bilanciato (medium)</option>
+                    <option value="high">Accurato (high)</option>
+                    <option value="xhigh">Molto accurato (xhigh)</option>
+                  </select>
+                </label>
+              </div>
+              <label>Istruzioni personali (facoltative)
+                <textarea name="systemPrompt" rows="2" placeholder="Es. Rispondi in modo conciso. Sono uno studente di ingegneria."></textarea>
+              </label>
+            </fieldset>
+
+            <fieldset>
+              <legend>Obsidian</legend>
+              <label>Cartella del vault
+                <span class="with-btn">
+                  <input type="text" name="vaultPath" placeholder="C:\Users\…\Documenti\MioVault" spellcheck="false">
+                  <button type="button" class="chip-btn" id="pick-vault">Sfoglia…</button>
+                </span>
+              </label>
+              <label>Cartella per gli appunti salvati
+                <input type="text" name="inboxFolder" placeholder="Claude Overlay" spellcheck="false">
+              </label>
+            </fieldset>
+
+            <fieldset>
+              <legend>Aspetto e comportamento</legend>
+              <div class="row">
+                <label>Posizione
+                  <select name="corner">
+                    <option value="bottom-right">In basso a destra</option>
+                    <option value="bottom-left">In basso a sinistra</option>
+                    <option value="top-right">In alto a destra</option>
+                    <option value="top-left">In alto a sinistra</option>
+                  </select>
+                </label>
+                <label>Opacità sfondo <output id="opacity-out"></output>
+                  <input type="range" name="opacity" min="0.3" max="1" step="0.02">
+                </label>
+              </div>
+              <div class="row">
+                <label>Risposta visibile per (s)
+                  <input type="number" name="autoHideSeconds" min="2" max="600">
+                </label>
+                <label>Nota visibile per (s)
+                  <input type="number" name="noteDisplaySeconds" min="2" max="600">
+                </label>
+              </div>
+              <div class="row">
+                <label>Opacità modalità fantasma <output id="ghost-out"></output>
+                  <input type="range" name="ghostOpacity" min="0.15" max="1" step="0.05">
+                </label>
+                <label class="check"><input type="checkbox" name="startAtLogin"> Avvia con Windows</label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Scorciatoie globali <small>(clicca e premi la combinazione)</small></legend>
+              <div class="row three">
+                <label>Claude<input type="text" name="hotkeyChat" class="hotkey" readonly></label>
+                <label>Note<input type="text" name="hotkeyNotes" class="hotkey" readonly></label>
+                <label>Fantasma<input type="text" name="hotkeyGhost" class="hotkey" readonly></label>
+              </div>
+            </fieldset>
+
+            <div class="settings-actions">
+              <span class="settings-msg" id="settings-msg" aria-live="polite"></span>
+              <button type="button" class="chip-btn" id="settings-cancel">Annulla</button>
+              <button type="submit" class="primary-btn">Salva</button>
+            </div>
+          </form>
+        </section>
+      </main>
+
+      <footer class="inputbar" id="inputbar">
+        <div class="context-chip" id="context-chip" hidden>
+          <svg class="ico"><use href="#i-clip"/></svg><span id="context-label"></span>
+          <button type="button" id="context-clear" title="Rimuovi la nota allegata"><svg class="ico"><use href="#i-x"/></svg></button>
+        </div>
+        <div class="input-row">
+          <textarea id="input" rows="1" spellcheck="true"></textarea>
+          <button class="icon-btn only-chat" id="btn-mic" title="Detta con la voce (Win+H)"><svg class="ico"><use href="#i-mic"/></svg></button>
+          <button class="send-btn only-chat" id="btn-send" title="Invia (Invio)">
+            <svg class="ico ico-send"><use href="#i-send"/></svg><svg class="ico ico-stop"><use href="#i-stop"/></svg>
+          </button>
+        </div>
+      </footer>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <script src="markdown.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
