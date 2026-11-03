@@ -123,6 +123,7 @@
     } else if (mode === 'notes') {
       // Tornando sul tab Note si resta dove eri (nota aperta o risultati); la prima volta cerca.
       if (search && !state.notes.current && !state.notes.results.length) refreshNotes(0);
+      else if (state.notes.current || state.notes.results.length) setView(state.view === 'expanded' ? 'expanded' : 'preview');
     } else if (mode === 'chat') {
       setView(chatLog.children.length && state.view !== 'compact' ? state.view : 'compact');
     }
