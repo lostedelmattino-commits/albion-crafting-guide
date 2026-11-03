@@ -18,6 +18,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const config = require('./config');
 const { ClaudeChat } = require('./claude');
+const { ClaudeCodeChat, checkClaudeCode } = require('./claude-code');
 const { Vault } = require('./obsidian');
 
 const CORNERS = [
@@ -38,10 +39,16 @@ let size = { w: 460, h: 120 };
 let ghost = false;
 let currentMode = 'chat';
 let vault = null;
-const chat = new ClaudeChat(
+// Due modi di parlare con Claude: abbonamento (tramite Claude Code) oppure chiave API.
+const subscriptionChat = new ClaudeCodeChat(
+  () => config.get(),
+  path.join(app.getPath('userData'), 'claude-code')
+);
+const apiChat = new ClaudeChat(
   () => config.get(),
   () => config.getApiKey()
 );
+const activeChat = () => (config.get().backend === 'api' ? apiChat : subscriptionChat);
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -56,7 +63,8 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
-  chat.abort();
+  apiChat.abort();
+  subscriptionChat.dispose();
 });
 
 function start() {
@@ -73,9 +81,8 @@ function start() {
     place();
   });
 
-  const needsKey = !config.getApiKey() && !process.env.ANTHROPIC_API_KEY;
-  win.webContents.once('did-finish-load', () => {
-    if (needsKey) {
+  win.webContents.once('did-finish-load', async () => {
+    if (await needsSetup()) {
       showOverlay('settings');
     } else if (tray && process.platform === 'win32') {
       tray.displayBalloon({
@@ -84,6 +91,12 @@ function start() {
       });
     }
   });
+}
+
+async function needsSetup() {
+  const c = config.get();
+  if (c.backend === 'api') return !config.getApiKey() && !process.env.ANTHROPIC_API_KEY;
+  return !(await checkClaudeCode(c.claudePath)).ok;
 }
 
 function createWindow() {
@@ -168,6 +181,7 @@ function showOverlay(mode) {
   win.show();
   win.focus();
   currentMode = mode;
+  if (mode === 'chat' && config.get().backend === 'subscription') subscriptionChat.warm();
   win.webContents.send('overlay:show', { mode, ...layoutInfo() });
 }
 
@@ -276,6 +290,11 @@ function applyConfig(patch, apiKey) {
   const c = config.update(patch);
   if (apiKey !== undefined && apiKey !== null) config.setApiKey(apiKey);
   if (c.vaultPath !== before.vaultPath) vault = new Vault(c.vaultPath);
+  if (c.backend !== before.backend) {
+    // Cambiando collegamento si riparte da una conversazione nuova.
+    apiChat.reset();
+    subscriptionChat.reset();
+  }
   if (c.startAtLogin !== before.startAtLogin && (process.platform === 'win32' || process.platform === 'darwin')) {
     app.setLoginItemSettings({ openAtLogin: c.startAtLogin });
   }
@@ -359,13 +378,23 @@ ipcMain.handle('chat:send', async (e, { text, contextRel }) => {
       return { ok: false, error: `Impossibile leggere la nota allegata: ${err.message}` };
     }
   }
-  return chat.send(content, (delta) => {
-    if (!e.sender.isDestroyed()) e.sender.send('chat:delta', delta);
-  });
+  const send = (channel, payload) => {
+    if (!e.sender.isDestroyed()) e.sender.send(channel, payload);
+  };
+  return activeChat().send(
+    content,
+    (delta) => send('chat:delta', delta),
+    (status) => send('chat:status', status)
+  );
 });
 
-ipcMain.on('chat:abort', () => chat.abort());
-ipcMain.on('chat:reset', () => chat.reset());
+ipcMain.on('chat:abort', () => activeChat().abort());
+ipcMain.on('chat:reset', () => {
+  apiChat.reset();
+  subscriptionChat.reset();
+});
+
+ipcMain.handle('cc:check', (_e, customPath) => checkClaudeCode(customPath ?? config.get().claudePath));
 
 ipcMain.handle('notes:search', async (_e, q) => {
   try {

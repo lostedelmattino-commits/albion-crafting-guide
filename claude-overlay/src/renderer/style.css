@@ -405,6 +405,19 @@ button { font: inherit; color: inherit; }
 .settings .with-btn { display: flex; gap: 6px; align-items: center; margin-top: 3px; }
 .settings .with-btn input { margin-top: 0; }
 .settings .check { display: flex; align-items: center; gap: 6px; align-self: end; padding-bottom: 6px; color: var(--fg); }
+.settings small.inline { display: inline; margin: 0; }
+.settings.backend-api .only-subscription,
+.settings.backend-subscription .only-api { display: none; }
+.cc-status {
+  font-size: 12px; line-height: 1.45; color: var(--fg-dim);
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 9px; margin-bottom: 8px; white-space: pre-line;
+}
+.cc-status.ok { border-color: rgba(143, 209, 158, 0.4); }
+.cc-status.ok strong { color: var(--ok); }
+.cc-status.bad { border-color: rgba(240, 138, 138, 0.45); }
+.cc-status.bad strong { color: var(--danger); }
+.cc-status code { font-family: var(--mono); font-size: 11.5px; background: var(--code-bg); padding: 1px 4px; border-radius: 4px; user-select: all; }
 .settings .hotkey { cursor: pointer; text-align: center; font-family: var(--mono); font-size: 11.5px; }
 .settings .hotkey.capturing { border-color: var(--accent); color: var(--accent); }
 .settings-actions {

@@ -26,6 +26,10 @@
     'claude-sonnet-5-5': 'Sonnet 5.5',
     'claude-haiku-5-5': 'Haiku 5.5',
     'claude-fable-5-1': 'Fable 5.1',
+    opus: 'Opus',
+    sonnet: 'Sonnet',
+    haiku: 'Haiku',
+    fable: 'Fable',
   };
   const EFFORT_NAMES = { low: 'rapido', medium: 'bilanciato', high: 'accurato', xhigh: 'molto accurato' };
 
@@ -142,12 +146,19 @@
     const c = state.config;
     let s = '';
     if (state.streaming) s = 'Claude sta scrivendo…';
-    else if (state.mode === 'chat') s = MODEL_NAMES[c.model] || c.model || '';
+    else if (state.mode === 'chat') s = chatLabel(c);
     else if (state.mode === 'notes') s = c.vaultName ? c.vaultName : 'Nessun vault impostato';
     if (state.ghost) s = 'Fantasma · i clic passano sotto';
     statusEl.textContent = s;
     statusEl.title =
-      state.mode === 'chat' ? `Modello: ${c.model} · ragionamento: ${EFFORT_NAMES[c.effort] || c.effort}` : s;
+      state.mode === 'chat'
+        ? `${c.backend === 'api' ? 'Chiave API' : 'Abbonamento tramite Claude Code'} · ragionamento: ${EFFORT_NAMES[c.effort] || c.effort}`
+        : s;
+  }
+
+  function chatLabel(c) {
+    if (c.backend === 'api') return `${MODEL_NAMES[c.model] || c.model} · API`;
+    return c.ccModel && c.ccModel !== 'default' ? `Abbonamento · ${MODEL_NAMES[c.ccModel] || c.ccModel}` : 'Abbonamento';
   }
 
   function reportState() {
@@ -361,7 +372,7 @@
     const thinking = el('div', 'thinking');
     const dots = el('span', 'dots');
     dots.append(el('i'), el('i'), el('i'));
-    thinking.append(dots, document.createTextNode('Claude sta pensando…'));
+    thinking.append(dots, el('span', 'label', 'Claude sta pensando…'));
     answer.append(thinking);
     turn.append(user, answer);
     chatLog.append(turn);
@@ -435,8 +446,14 @@
       acc += delta;
       scheduleRender(answer, acc, turn);
     });
+    const offStatus = api.on('chat:status', (msg) => {
+      const label = answer.querySelector('.thinking .label');
+      if (label) label.textContent = msg;
+      else statusEl.textContent = msg;
+    });
     const res = await api.chatSend(text, ctx && ctx.rel);
     off();
+    offStatus();
     if (streamRaf) cancelAnimationFrame(streamRaf);
     streamRaf = 0;
     streamPending = null;
@@ -651,6 +668,8 @@
       else if (c[elx.name] !== undefined) elx.value = c[elx.name];
     }
     form.elements.apiKey.value = '';
+    setBackendClass(c.backend);
+    if (c.backend !== 'api') refreshCcStatus();
     $('apikey-state').textContent = c.hasApiKey
       ? 'Chiave salvata (cifrata su questo PC). Lascia vuoto per non cambiarla.'
       : c.apiKeyFromEnv
@@ -662,6 +681,52 @@
     $('settings-msg').classList.remove('error');
     content.scrollTop = 0;
   }
+
+  function setBackendClass(backend) {
+    form.classList.toggle('backend-api', backend === 'api');
+    form.classList.toggle('backend-subscription', backend !== 'api');
+  }
+
+  let ccSeq = 0;
+  async function refreshCcStatus() {
+    const box = $('cc-status');
+    const seq = ++ccSeq;
+    box.className = 'cc-status';
+    box.textContent = 'Cerco Claude Code…';
+    const r = await api.checkClaudeCode(form.elements.claudePath.value.trim());
+    if (seq !== ccSeq) return;
+    box.textContent = '';
+    const strong = (t) => el('strong', '', t);
+    const code = (t) => el('code', '', t);
+    if (r.ok) {
+      box.classList.add('ok');
+      box.append(
+        strong(`✓ Claude Code trovato (${r.version}).`),
+        document.createTextNode(
+          "\nUsa l'account con cui hai fatto l'accesso a Claude Code: con un piano Pro o Max consumi il tuo abbonamento, senza costi extra. " +
+            'Se le risposte danno errore di accesso, apri un terminale ed esegui '
+        ),
+        code('claude'),
+        document.createTextNode(' una volta per fare il login.')
+      );
+    } else {
+      box.classList.add('bad');
+      box.append(
+        strong(`✗ ${r.error}`),
+        document.createTextNode('\nInstallalo da PowerShell con '),
+        code('irm https://claude.ai/install.ps1 | iex'),
+        document.createTextNode(', poi esegui '),
+        code('claude'),
+        document.createTextNode(' e accedi con il tuo account Claude. Infine premi «Verifica».')
+      );
+    }
+  }
+
+  $('cc-check').addEventListener('click', () => refreshCcStatus());
+  form.elements.backend.addEventListener('change', () => {
+    setBackendClass(form.elements.backend.value);
+    if (form.elements.backend.value !== 'api') refreshCcStatus();
+  });
 
   form.addEventListener('input', (e) => {
     const t = e.target;
@@ -680,8 +745,10 @@
       patch[elx.name] = elx.type === 'checkbox' ? elx.checked : elx.value;
     }
     const key = form.elements.apiKey.value.trim();
+    const backendBefore = state.config.backend;
     const res = await api.saveConfig(patch, key ? key : undefined);
     state.config = res.config;
+    if (res.config.backend !== backendBefore) newChat(); // conversazione nuova con il nuovo collegamento
     applyLayout();
     if (res.failedHotkeys && res.failedHotkeys.length) {
       $('settings-msg').textContent = `Scorciatoie non disponibili: ${res.failedHotkeys.join(', ')}`;

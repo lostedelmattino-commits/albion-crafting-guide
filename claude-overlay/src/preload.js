@@ -3,7 +3,14 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
-const EVENTS = new Set(['overlay:show', 'overlay:request-hide', 'overlay:ghost', 'config:changed', 'chat:delta']);
+const EVENTS = new Set([
+  'overlay:show',
+  'overlay:request-hide',
+  'overlay:ghost',
+  'config:changed',
+  'chat:delta',
+  'chat:status',
+]);
 
 contextBridge.exposeInMainWorld('overlay', {
   getConfig: () => ipcRenderer.invoke('config:get'),
@@ -13,6 +20,7 @@ contextBridge.exposeInMainWorld('overlay', {
   chatSend: (text, contextRel) => ipcRenderer.invoke('chat:send', { text, contextRel }),
   chatAbort: () => ipcRenderer.send('chat:abort'),
   chatReset: () => ipcRenderer.send('chat:reset'),
+  checkClaudeCode: (customPath) => ipcRenderer.invoke('cc:check', customPath),
 
   notesSearch: (q) => ipcRenderer.invoke('notes:search', q),
   notesRead: (rel) => ipcRenderer.invoke('notes:read', rel),

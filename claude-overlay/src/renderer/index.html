@@ -81,12 +81,41 @@
 
             <fieldset>
               <legend>Claude</legend>
-              <label>Chiave API Anthropic
-                <input type="password" name="apiKey" id="set-apikey" placeholder="sk-ant-…" spellcheck="false">
-                <small id="apikey-state"></small>
+              <label>Collegamento
+                <select name="backend">
+                  <option value="subscription">Il mio abbonamento Claude (tramite Claude Code)</option>
+                  <option value="api">Chiave API Anthropic (a consumo, si paga a parte)</option>
+                </select>
               </label>
+
+              <div class="only-subscription">
+                <div class="cc-status" id="cc-status"></div>
+                <label>Percorso di Claude Code <small class="inline">(lascia vuoto per trovarlo da solo)</small>
+                  <span class="with-btn">
+                    <input type="text" name="claudePath" placeholder="trovato automaticamente" spellcheck="false">
+                    <button type="button" class="chip-btn" id="cc-check">Verifica</button>
+                  </span>
+                </label>
+              </div>
+
+              <div class="only-api">
+                <label>Chiave API Anthropic
+                  <input type="password" name="apiKey" id="set-apikey" placeholder="sk-ant-…" spellcheck="false">
+                  <small id="apikey-state"></small>
+                </label>
+              </div>
+
               <div class="row">
-                <label>Modello
+                <label class="only-subscription">Modello
+                  <select name="ccModel">
+                    <option value="default">Predefinito del mio piano</option>
+                    <option value="opus">Opus</option>
+                    <option value="sonnet">Sonnet</option>
+                    <option value="haiku">Haiku</option>
+                    <option value="fable">Fable</option>
+                  </select>
+                </label>
+                <label class="only-api">Modello
                   <select name="model">
                     <option value="claude-opus-5-5">Claude Opus 5.5</option>
                     <option value="claude-sonnet-5-5">Claude Sonnet 5.5</option>
@@ -103,6 +132,7 @@
                   </select>
                 </label>
               </div>
+              <label class="check only-subscription"><input type="checkbox" name="webSearch"> Può cercare sul web per le risposte aggiornate</label>
               <label>Istruzioni personali (facoltative)
                 <textarea name="systemPrompt" rows="2" placeholder="Es. Rispondi in modo conciso. Sono uno studente di ingegneria."></textarea>
               </label>

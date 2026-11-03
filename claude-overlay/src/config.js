@@ -19,7 +19,13 @@ const DEFAULTS = {
   hotkeyChat: 'CommandOrControl+Shift+Space',
   hotkeyNotes: 'CommandOrControl+Shift+O',
   hotkeyGhost: 'CommandOrControl+Shift+G',
-  model: 'claude-opus-5-5',
+  // 'subscription' = tramite Claude Code con il tuo abbonamento Pro/Max (nessun costo extra)
+  // 'api' = chiave API Anthropic, a consumo
+  backend: 'subscription',
+  claudePath: '', // percorso di Claude Code, se non viene trovato da solo
+  ccModel: 'default', // default | opus | sonnet | haiku | fable (modalità abbonamento)
+  webSearch: true, // modalità abbonamento: Claude può cercare sul web
+  model: 'claude-opus-5-5', // modalità chiave API
   effort: 'low', // low = risposte rapide; alza a medium/high per domande difficili
   systemPrompt: '',
   vaultPath: '',
@@ -92,6 +98,9 @@ function update(patch) {
   c.expandedHeight = clamp(c.expandedHeight, 240, 1400);
   c.margin = clamp(c.margin, 0, 200);
   if (!['bottom-right', 'bottom-left', 'top-right', 'top-left'].includes(c.corner)) c.corner = DEFAULTS.corner;
+  if (!['subscription', 'api'].includes(c.backend)) c.backend = DEFAULTS.backend;
+  if (!['default', 'opus', 'sonnet', 'haiku', 'fable'].includes(c.ccModel)) c.ccModel = DEFAULTS.ccModel;
+  if (!['low', 'medium', 'high', 'xhigh', 'max'].includes(c.effort)) c.effort = DEFAULTS.effort;
   persist();
   return c;
 }
