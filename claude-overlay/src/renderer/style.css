@@ -489,3 +489,5 @@ button { font: inherit; color: inherit; }
 
 .md img.embed { display: block; max-width: 100%; max-height: 320px; border-radius: 8px; margin: 4px 0 8px; border: 1px solid var(--line); }
 .md .embed-img { color: var(--fg-faint); font-size: 12px; }
+.md mark.hit { background: rgba(250, 210, 90, 0.28); color: inherit; border-radius: 3px; padding: 0 1px; }
+.md mark.hit.current { background: var(--accent); color: #1b1310; }

@@ -45,7 +45,7 @@
     config: {},
     layout: { corner: 'bottom-right', maxHeight: 900, maxWidth: 1600 },
     context: null, // nota allegata alla prossima domanda: { rel, title }
-    notes: { results: [], selected: 0, current: null },
+    notes: { results: [], selected: 0, current: null, history: [], query: '', hits: [], hit: -1 },
     modeBeforeSettings: 'chat',
     drafts: { chat: '', notes: '' }, // testo in sospeso per ciascuna modalità
     attachments: [], // immagini incollate: { full, model: {data, mediaType}, thumb }
@@ -798,6 +798,7 @@
     const seq = ++searchSeq;
     const r = await api.notesSearch(q);
     if (seq !== searchSeq || state.mode !== 'notes') return;
+    state.notes.query = q; // usata per evidenziare le parole nella nota aperta
     closeNote();
     results.textContent = '';
     if (!r.ok) {
@@ -845,18 +846,23 @@
     highlightSelected();
   }
 
-  async function openNote(rel) {
+  async function openNote(rel, { fromHistory = false } = {}) {
+    const prev = !noteView.hidden && state.notes.current ? state.notes.current.rel : null;
     const r = await api.notesRead(rel);
     if (!r.ok) return toast(r.error, true);
+    // Da una nota a un'altra (link [[...]]): ← riporterà alla nota di prima.
+    if (prev && prev !== rel && !fromHistory) state.notes.history.push(prev);
     state.notes.current = r.note;
     $('note-title').textContent = r.note.title;
-    $('note-folder').textContent = r.note.folder || 'radice del vault';
     noteBody.innerHTML = Markdown.render(r.note.text);
     loadEmbeds(noteBody);
     results.hidden = true;
     noteView.hidden = false;
     setView(state.view === 'expanded' ? 'expanded' : 'preview');
     content.scrollTop = 0;
+    const back = state.notes.history[state.notes.history.length - 1];
+    $('note-back').title = back ? `Torna a «${back.split('/').pop().replace(/\.md$/i, '')}»` : 'Torna ai risultati';
+    highlightHits();
     // La nota resta per qualche secondo; con la puntina (o in fantasma) resta finché vuoi.
     if (state.autoPinned) setPinned(false, { silent: true }); // le note restano temporanee anche dalla chat fissata
     if (state.config.notesOpenGhost && !state.ghost) api.setGhost(true);
@@ -882,6 +888,65 @@
     noteView.hidden = true;
     results.hidden = false;
     state.notes.current = null;
+    state.notes.history = [];
+    state.notes.hits = [];
+  }
+
+  // ← nella nota: alla nota precedente se ci sei arrivato da un link, altrimenti ai risultati.
+  function noteBack() {
+    const prev = state.notes.history.pop();
+    if (prev) return openNote(prev, { fromHistory: true });
+    closeNote();
+    stopCountdown();
+    input.focus();
+  }
+
+  // Le parole cercate restano evidenziate nella nota; si parte dalla prima, Invio = la successiva.
+  function highlightHits() {
+    const n = state.notes;
+    n.hits = [];
+    n.hit = -1;
+    let info = (n.current && n.current.folder) || 'radice del vault';
+    const terms = n.query.split(/\s+/).filter((t) => t.length >= 3);
+    if (terms.length) {
+      const re = new RegExp(terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
+      const walker = document.createTreeWalker(noteBody, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      for (const node of nodes) {
+        const text = node.nodeValue;
+        re.lastIndex = 0;
+        if (!re.test(text)) continue;
+        re.lastIndex = 0;
+        const frag = document.createDocumentFragment();
+        let last = 0;
+        let m;
+        while ((m = re.exec(text))) {
+          frag.append(text.slice(last, m.index));
+          const mark = el('mark', 'hit', m[0]);
+          frag.append(mark);
+          n.hits.push(mark);
+          last = m.index + m[0].length;
+        }
+        frag.append(text.slice(last));
+        node.replaceWith(frag);
+      }
+      if (n.hits.length) {
+        info += ` · ${n.hits.length} × «${n.query}»${n.hits.length > 1 ? ' · Invio = prossimo' : ''}`;
+        goToHit(0);
+      }
+    }
+    $('note-folder').textContent = info;
+  }
+
+  function goToHit(i) {
+    const hits = state.notes.hits;
+    if (!hits.length) return;
+    if (state.notes.hit >= 0 && hits[state.notes.hit]) hits[state.notes.hit].classList.remove('current');
+    state.notes.hit = (i + hits.length) % hits.length;
+    const mark = hits[state.notes.hit];
+    mark.classList.add('current');
+    mark.scrollIntoView({ block: 'center' });
   }
 
   results.addEventListener('click', (e) => {
@@ -889,11 +954,7 @@
     if (b) openNote(b.dataset.rel);
   });
 
-  $('note-back').addEventListener('click', () => {
-    closeNote();
-    stopCountdown();
-    input.focus();
-  });
+  $('note-back').addEventListener('click', () => noteBack());
   $('note-open').addEventListener('click', () => {
     if (state.notes.current) api.openInObsidian(state.notes.current.rel);
   });
@@ -1146,6 +1207,11 @@
       e.preventDefault();
       if (state.mode === 'chat') sendChat();
       else if (state.mode === 'notes') {
+        // Nota aperta e stessa ricerca: Invio passa alla parola successiva nella nota.
+        if (!noteView.hidden && !searchTimer && state.notes.hits.length > 1 && input.value.trim() === state.notes.query) {
+          stopCountdown();
+          return goToHit(state.notes.hit + 1);
+        }
         const openSelected = () => {
           const n = state.notes.results[state.notes.selected];
           if (noteView.hidden && n) openNote(n.rel);
@@ -1173,11 +1239,7 @@
       applyLayout();
       return setMode(state.modeBeforeSettings);
     }
-    if (state.mode === 'notes' && !noteView.hidden) {
-      closeNote();
-      stopCountdown();
-      return;
-    }
+    if (state.mode === 'notes' && !noteView.hidden) return noteBack();
     if (state.view === 'expanded') return setView(state.mode === 'chat' && !chatLog.children.length ? 'compact' : 'preview');
     requestHide();
   });
