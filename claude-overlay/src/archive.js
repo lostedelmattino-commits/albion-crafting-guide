@@ -98,6 +98,9 @@ Regole:
 - Integra le informazioni nuove nella riga o sezione giusta (per esempio come riga della tabella esistente).
 - Niente duplicati.
 - Non togliere informazioni esistenti, a meno che siano contraddette da quelle nuove: in quel caso tieni la nuova.
+- Mantieni il riquadro "> [!summary] In breve" sotto il titolo (aggiungilo se manca; aggiornalo solo se lo scopo della nota cambia).
+- Righe della tabella sempre in quest'ordine: Cos'è → Quando serve → Come si fa (Attivarlo, Flusso) → Scorciatoie → Limite → Non funziona.
+- Alla prima menzione di uno strumento o comando del programma usa il link [[Strumento]]; in una cella di tabella un link con alias si scrive [[nota\\|alias]].
 - Mantieni lo stile della nota: tabelle a due colonne, **grassetto** per tasti e comandi, → per i menu, italiano, simboli 💡 ⚠️ ✅.`;
 
 // ------------------------------------------------------------- utilità

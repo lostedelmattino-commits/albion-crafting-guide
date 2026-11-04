@@ -6,7 +6,8 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 
-const SKIP_DIRS = new Set(['.obsidian', '.trash', '.git', 'node_modules']);
+// "_Archivio riordino" contiene le note superate dal riordino: non vanno né cercate né date a Claude.
+const SKIP_DIRS = new Set(['.obsidian', '.trash', '.git', 'node_modules', '_Archivio riordino']);
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const RESCAN_MS = 20 * 1000;
 
@@ -230,9 +231,12 @@ class Vault {
     await this.ensureIndexed();
     const terms = keywords(query);
     if (!terms.length) return [];
+    const wantsShortcuts = /scorciat|\btast[io]\b|hotkey|shortcut/.test(plain(query));
     const scored = [];
     for (const n of this.notes.values()) {
-      if (excludePrefixes.some((p) => n.rel.startsWith(`${p}/`))) continue;
+      // Le pagine "{Materia} - Scorciatoie" restano utili anche se stanno negli indici.
+      const shortcuts = /^4 - Indexes\/[^/]+ - Scorciatoie\.md$/.test(n.rel);
+      if (!shortcuts && excludePrefixes.some((p) => n.rel.startsWith(`${p}/`))) continue;
       const title = plain(n.title);
       const rel = plain(n.rel);
       let score = 0;
@@ -246,6 +250,7 @@ class Vault {
         score += s;
       }
       if (!matched) continue;
+      if (shortcuts && wantsShortcuts) score += 8; // "qual è la scorciatoia per…": la pagina scorciatoie del programma
       score *= 0.5 + matched / terms.length; // premia le note che coprono più parole
       if (score >= 6) scored.push({ n, score });
     }
