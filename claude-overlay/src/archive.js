@@ -52,6 +52,7 @@ Azioni, una per ogni argomento distinto:
 - Se lo scambio conferma come si è risolto un problema di <problemi_in_sospeso> (es. "ha funzionato", "era quello", "risolto"), archivialo ("nuova" o "unisci") con SOLO la causa e la soluzione verificata, e metti il numero in "sospeso". Se l'utente dice che NON ha funzionato, resta "attendi" con lo stesso numero.
 - Una soluzione certa e documentata (non un'ipotesi da provare) si archivia subito, anche se riguarda un problema.
 - "correggi": una nota esistente contiene informazioni sbagliate (l'utente lo dice, o la risposta le smentisce): "nota_esistente" = il suo percorso, "contenuto" = le informazioni corrette, "motivo" = cosa era sbagliato.
+- Se nello scambio Claude ha già modificato o riordinato i file del vault su richiesta dell'utente, non riscrivere quelle note ("salta"); ma se ha unito una nota doppia in un'altra, proponi "elimina" per la doppia con "sostituita_da".
 - "elimina": una nota esistente è sbagliata del tutto o è un doppione di un'altra: "nota_esistente" = il suo percorso, "sostituita_da" = il titolo della nota che la sostituisce (vuoto se nessuna), "motivo". Usalo solo se sei sicuro; se la nota ha anche solo una parte utile, preferisci "correggi" o "unisci".
 - "unisci": esiste già una nota sullo stesso argomento (stesso comando o stesso problema). Cercala in tutta la materia, non solo nella categoria scelta. In "nota_esistente" metti il suo percorso: "6 - Atomic Notes/{Materia}/{NN Categoria}/{Titolo}.md".
 - "nuova": argomento nuovo.

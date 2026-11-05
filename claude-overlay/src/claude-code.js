@@ -17,8 +17,27 @@ const BASE_SYSTEM = [
   "Rispondi nella lingua dell'utente. Vai dritto al punto: prima la risposta, poi eventuali dettagli.",
   'Usa Markdown leggero (elenchi, grassetto, blocchi di codice) solo quando aiuta la lettura in uno spazio stretto.',
   "Se l'utente allega una nota di Obsidian, usala come contesto principale.",
-  'Non hai accesso ai file del computer: se servono informazioni aggiornate puoi cercare sul web, quando lo strumento è disponibile.',
 ].join('\n');
+
+const NO_FILES = 'Non hai accesso ai file del computer: se servono informazioni aggiornate puoi cercare sul web, quando lo strumento è disponibile.';
+
+// Regole per modificare il vault direttamente dalla chat (stesse dell'archiviazione automatica).
+const VAULT_RULES = (vault) => `Hai accesso in lettura e scrittura al vault Obsidian dell'utente: ${vault}
+Quando l'utente ti chiede di sistemare, unire, correggere o riordinare note, FALLO DIRETTAMENTE sui file con gli strumenti (Read, Edit, Write, Glob, Grep): non chiedere conferme e non incollare righe da sostituire. Alla fine scrivi in una o due righe cosa hai cambiato.
+Regole del vault (Zettelkasten):
+- Struttura: 1 - Rough Notes (appunti grezzi), 2 - Source Material, 3 - Tags ({Materia}.md e Strumenti/{Strumento}.md), 4 - Indexes ({Materia} - {Categoria}.md, {Materia} - Scorciatoie.md, Come usare questo vault.md), 5 - Template, 6 - Atomic Notes/{Materia}/{NN} {Categoria}/{Titolo}.md, Images.
+- Nota atomica: riga vuota iniziale, data "YYYY-MM-DD HH:mm", "Status:", "Tags: [[{Materia} - {Categoria}]]" (+ " [[{Materia} - Scorciatoie]]" se ha scorciatoie), "# {Titolo}" uguale al nome del file, riquadro "> [!summary] In breve", tabella "| Vuoi… | Fai così |" con righe nell'ordine Cos'è → Quando serve → Come si fa → Scorciatoie → Limite → Non funziona, poi "# References" con [[{Materia} - {Categoria}]]. Niente frontmatter YAML.
+- Pagina scorciatoie: tabella "| Tasti | Cosa fa | Nota |", una riga per coppia tasti + nota, nessun doppione.
+- Indici: riga in corsivo con gli argomenti ed elenco "- [[Titolo]]" di tutte le note della categoria. Pagine strumento: elenco sotto "## Note che lo usano".
+- Titoli orientati all'uso (verbo + scopo + (strumento)), unici, senza \\ / : * ? " < > | # ^ [ ]. Se rinomini una nota, aggiorna TUTTI i link [[...]] che la richiamano.
+- Un link con alias in una cella di tabella si scrive [[nota\\|alias]].
+- Non toccare mai la cartella .obsidian e non lavorare fuori dal vault.
+- Non puoi cancellare file: per un doppione, unisci il contenuto nella nota giusta, sposta i link su quella e dillo nella risposta (l'archiviazione automatica eliminerà il doppione).`;
+
+/** Il vault è modificabile dalla chat? (solo abbonamento, con un vault impostato e l'opzione attiva) */
+function canEditVault(cfg) {
+  return Boolean(cfg.chatCanEdit && cfg.vaultPath);
+}
 
 /** Trova l'eseguibile di Claude Code. */
 const foundClaude = new Map();
@@ -149,7 +168,9 @@ class ClaudeCodeChat {
   argsFor(cfg) {
     fs.mkdirSync(this.workDir, { recursive: true });
     const systemFile = path.join(this.workDir, 'system-prompt.md');
-    const system = cfg.systemPrompt ? `${BASE_SYSTEM}\n\n${cfg.systemPrompt}` : BASE_SYSTEM;
+    const edit = canEditVault(cfg);
+    const base = `${BASE_SYSTEM}\n${edit ? VAULT_RULES(cfg.vaultPath) : NO_FILES}`;
+    const system = cfg.systemPrompt ? `${base}\n\n${cfg.systemPrompt}` : base;
     fs.writeFileSync(systemFile, system, 'utf8');
     const args = [
       '-p',
@@ -161,10 +182,13 @@ class ClaudeCodeChat {
       '--strict-mcp-config',
       '--disable-slash-commands',
     ];
-    // Solo ricerca web (facoltativa): nessuno strumento che tocchi file o comandi.
-    const tools = cfg.webSearch ? 'WebSearch,WebFetch' : '';
+    // Ricerca web (facoltativa) e, se attivo, lettura/modifica dei file del vault.
+    // Mai comandi (niente Bash/PowerShell): i file si possono solo leggere e modificare.
+    const list = [...(cfg.webSearch ? ['WebSearch', 'WebFetch'] : []), ...(edit ? ['Read', 'Edit', 'Write', 'Glob', 'Grep'] : [])];
+    const tools = list.join(',');
     args.push('--tools', tools);
     if (tools) args.push('--allowedTools', tools);
+    if (edit) args.push('--add-dir', cfg.vaultPath, '--permission-mode', 'acceptEdits');
     if (cfg.ccModel && cfg.ccModel !== 'default') args.push('--model', cfg.ccModel);
     if (cfg.effort) args.push('--effort', cfg.effort);
     return args;
@@ -182,12 +206,13 @@ class ClaudeCodeChat {
 
   ensureProcess() {
     const cfg = this.getConfig();
-    const signature = JSON.stringify([cfg.claudePath, cfg.ccModel, cfg.effort, cfg.webSearch, cfg.systemPrompt]);
+    const signature = JSON.stringify([cfg.claudePath, cfg.ccModel, cfg.effort, cfg.webSearch, cfg.systemPrompt, canEditVault(cfg), cfg.vaultPath]);
     if (this.child && this.signature !== signature) this.stop(); // impostazioni cambiate: riparte riprendendo la conversazione
     if (this.child) return;
     // Claude Code riusa le istruzioni registrate all'inizio della conversazione: se cambiano, ne serve una nuova.
-    if (this.promptUsed !== undefined && this.promptUsed !== cfg.systemPrompt) this.freshSession();
-    this.promptUsed = cfg.systemPrompt;
+    const promptKey = JSON.stringify([cfg.systemPrompt, canEditVault(cfg), cfg.vaultPath]);
+    if (this.promptUsed !== undefined && this.promptUsed !== promptKey) this.freshSession();
+    this.promptUsed = promptKey;
 
     const exe = findClaude(cfg.claudePath);
     if (!exe) throw new Error(NOT_FOUND);

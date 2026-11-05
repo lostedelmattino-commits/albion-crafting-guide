@@ -30,6 +30,7 @@ const DEFAULTS = {
   claudePath: '', // percorso di Claude Code, se non viene trovato da solo
   ccModel: 'default', // default | opus | sonnet | haiku | fable (modalità abbonamento)
   webSearch: true, // modalità abbonamento: Claude può cercare sul web
+  chatCanEdit: true, // modalità abbonamento: dalla chat Claude può modificare le note del vault
   model: 'claude-opus-5-5', // modalità chiave API
   effort: 'low', // low = risposte rapide; alza a medium/high per domande difficili
   systemPrompt: '',
