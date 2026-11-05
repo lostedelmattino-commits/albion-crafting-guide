@@ -24,6 +24,9 @@ Un pop-up flottante e semitrasparente per Windows: lo richiami con una scorciato
 - Argomento già presente → la nota esistente viene **unita** (dal modello principale), con backup prima e controlli dopo: se qualcosa non torna, il nuovo testo va in fondo sotto `## Aggiunta {data}` invece di sovrascrivere.
 - Se serve, crea da sola una categoria (`05 Basi e interfaccia`, indice e riga nella nota tag) o una materia nuova (aggiornando anche «Come usare questo vault»).
 - Chiacchiere e ringraziamenti non vengono archiviati. Se è incerto (confidenza sotto 0,6) o qualcosa va storto, l'appunto finisce in `1 - Rough Notes/{data}.md` sotto `## Da sistemare`: non si perde mai niente.
+- **Problemi**: se chiedi perché qualcosa non funziona e la soluzione non è ancora confermata, lo scambio resta **in attesa** (nessuna nota). Quando dici che ha funzionato («era quello», «risolto»), viene archiviata solo la causa e la soluzione verificata.
+- **Niente doppioni**: se una nota nuova somiglia a una esistente, prima di scrivere decide il modello principale (crea, unisci o lascia perdere). Il controllo parte solo in quel caso, per non consumare crediti.
+- **Correggere ed eliminare in automatico**: una nota con informazioni sbagliate viene corretta; una nota sbagliata o doppia viene eliminata (dopo la conferma del modello principale) e i link che la richiamavano passano alla nota giusta. ↩ Annulla ripristina tutto.
 - Script lunghi (oltre ~40 righe) → file in `2 - Source Material/` e nota `Script - …` in `Maya/09 Script Python`.
 - Sotto la risposta: `📁 ZBrush › Sculpting › CurveTube… (creata)`. Clicca per aprire la nota nel pop-up, **↩ Annulla** per rimettere il vault com'era.
 - Ogni giorno, in `1 - Rough Notes/{data}.md` sotto `## Archiviato oggi`, trovi il registro di cosa è stato creato o aggiornato.

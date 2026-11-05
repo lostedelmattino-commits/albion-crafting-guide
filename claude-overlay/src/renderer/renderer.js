@@ -628,6 +628,7 @@
       box.append(el('div', 'archive-line error', `📁 ⚠️ ${r.error || 'Archiviazione non riuscita.'}`));
       return;
     }
+    if (r.waiting) box.append(el('div', 'archive-line pending', '📁 In attesa: lo archivio quando mi dici che ha funzionato'));
     if (r.skipped && !r.items.length && !r.rough) {
       box.append(el('div', 'archive-line pending', '📁 Niente da archiviare'));
       return;
@@ -635,8 +636,8 @@
     for (const it of r.items) {
       const line = el('div', 'archive-line');
       const crumbs = el('span', 'crumbs', `📁 ${it.materia} › ${it.categoria} › `);
-      const a = el('a', '', it.titolo);
-      a.dataset.rel = it.rel;
+      const a = el(it.rel ? 'a' : 'span', '', it.titolo); // una nota eliminata non si apre più
+      if (it.rel) a.dataset.rel = it.rel;
       crumbs.append(a);
       line.append(crumbs, el('span', 'state', `(${it.action})`));
       box.append(line);
@@ -679,6 +680,7 @@
       return `Salvato in ${it.materia} → ${it.categoria} → ${it.titolo}${more}`;
     }
     if (r.rough) return 'Salvato in Rough Notes, sotto «Da sistemare»';
+    if (r.waiting) return 'In attesa: lo archivio quando confermi che ha funzionato';
     return 'Niente da archiviare';
   }
 

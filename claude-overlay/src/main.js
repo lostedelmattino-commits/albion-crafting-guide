@@ -65,6 +65,7 @@ const archivist = new Archivist({
   ),
   // Fuori dal vault, così i backup non finiscono nella ricerca di Obsidian.
   backupRoot: path.join(app.getPath('appData'), 'ClaudeOverlay', 'backups'),
+  stateFile: path.join(app.getPath('userData'), 'problemi-in-sospeso.json'),
 });
 let hotkeyFailures = [];
 let sendSeq = 0; // numero dell'ultima domanda inviata

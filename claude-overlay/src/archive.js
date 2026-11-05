@@ -13,6 +13,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
+const { keywords } = require('./obsidian');
 
 const DIRS = {
   rough: '1 - Rough Notes',
@@ -31,6 +32,8 @@ const LONG_SCRIPT_LINES = 40;
 const MAX_TITLE = 80;
 const MAX_PATH = 250;
 const MAX_TREE_TITLES = 250; // titoli al massimo nel prompt di classificazione
+const SIMILAR_SCORE = 40; // somiglianza di contenuto oltre la quale una nota nuova va revisionata (con titolo in comune)
+const PENDING_TTL = 24 * 60 * 60 * 1000; // un problema resta in sospeso al massimo un giorno
 // Saluti e conferme: non serve chiamare il modello per sapere che non vanno archiviati.
 const SMALL_TALK = /^(grazie( mille| tante)?|ok(ay)?|perfetto|ciao|va bene|ottimo|top|capito|thanks|thank you)[\s!.,?]*$/i;
 
@@ -45,6 +48,11 @@ Struttura del vault:
 
 Azioni, una per ogni argomento distinto:
 - "salta": chiacchiere, ringraziamenti, domande non tecniche, o contenuto già presente identico nel vault. Non si scrive niente.
+- "attendi": lo scambio riguarda un PROBLEMA (qualcosa non funziona, un errore) e la soluzione NON è confermata: Claude propone ipotesi o passi da provare e l'utente non ha detto che ha funzionato. Non si scrive niente: il problema resta in sospeso. Se è lo stesso problema di uno in <problemi_in_sospeso>, metti il suo numero in "sospeso".
+- Se lo scambio conferma come si è risolto un problema di <problemi_in_sospeso> (es. "ha funzionato", "era quello", "risolto"), archivialo ("nuova" o "unisci") con SOLO la causa e la soluzione verificata, e metti il numero in "sospeso". Se l'utente dice che NON ha funzionato, resta "attendi" con lo stesso numero.
+- Una soluzione certa e documentata (non un'ipotesi da provare) si archivia subito, anche se riguarda un problema.
+- "correggi": una nota esistente contiene informazioni sbagliate (l'utente lo dice, o la risposta le smentisce): "nota_esistente" = il suo percorso, "contenuto" = le informazioni corrette, "motivo" = cosa era sbagliato.
+- "elimina": una nota esistente è sbagliata del tutto o è un doppione di un'altra: "nota_esistente" = il suo percorso, "sostituita_da" = il titolo della nota che la sostituisce (vuoto se nessuna), "motivo". Usalo solo se sei sicuro; se la nota ha anche solo una parte utile, preferisci "correggi" o "unisci".
 - "unisci": esiste già una nota sullo stesso argomento (stesso comando o stesso problema). Cercala in tutta la materia, non solo nella categoria scelta. In "nota_esistente" metti il suo percorso: "6 - Atomic Notes/{Materia}/{NN Categoria}/{Titolo}.md".
 - "nuova": argomento nuovo.
 Nell'albero, le categorie lontane dalla domanda mostrano solo il numero di note: per "unisci" usa solo note di cui vedi il titolo (nell'albero o tra le note simili).
@@ -89,7 +97,20 @@ Contenuto (campo "contenuto", Markdown). È una guida, non la chat:
 "confidenza": da 0 a 1, quanto sei sicuro di azione, materia e categoria.
 
 Rispondi SOLO con un array JSON, senza testo prima o dopo e senza blocchi di codice. Ogni oggetto:
-{"azione": "nuova" | "unisci" | "salta", "tipo": "nota", "materia": "", "categoria": "", "categoria_nuova": false, "materia_nuova": false, "titolo": "", "nota_esistente": "", "descrizione_categoria": "", "descrizione_materia": "", "argomento_breve": "", "confidenza": 0.0, "contenuto": "", "script": "", "nome_script": "", "nome_file": "", "scorciatoie": [], "strumenti": []}`;
+{"azione": "nuova" | "unisci" | "salta" | "attendi" | "correggi" | "elimina", "sospeso": 0, "sostituita_da": "", "motivo": "", "tipo": "nota", "materia": "", "categoria": "", "categoria_nuova": false, "materia_nuova": false, "titolo": "", "nota_esistente": "", "descrizione_categoria": "", "descrizione_materia": "", "argomento_breve": "", "confidenza": 0.0, "contenuto": "", "script": "", "nome_script": "", "nome_file": "", "scorciatoie": [], "strumenti": []}`;
+
+const REVIEW_SYSTEM = `Sei il revisore dell'archivio Obsidian dell'utente. Un classificatore veloce propone un'azione; tu la confronti con le note esistenti mostrate e decidi, seguendo queste regole, prima che venga scritta.
+Rispondi SOLO con un oggetto JSON: {"decisione": "conferma" | "unisci" | "salta" | "annulla", "nota_esistente": "", "motivo": ""}
+- NOTA NUOVA: "conferma" se l'argomento non è già coperto; "unisci" (percorso in "nota_esistente") se una nota esistente tratta lo stesso comando o problema; "salta" se il contenuto è già presente o non vale una nota.
+- ELIMINAZIONE: "conferma" solo se la nota è davvero sbagliata o doppia e il suo contenuto utile è già nella nota che la sostituisce o altrove; altrimenti "annulla".
+- Nel dubbio: per una nota nuova "conferma", per un'eliminazione "annulla".`;
+
+const CORRECT_SYSTEM = `Correggi una nota del vault Obsidian dell'utente che contiene informazioni sbagliate.
+Restituisci SOLO il testo completo della nota corretta: niente blocchi di codice intorno, niente commenti.
+Regole:
+- Sostituisci le informazioni sbagliate con quelle corrette fornite; togli ciò che è smentito; non aggiungere altro.
+- Mantieni identici l'intestazione (riga vuota iniziale, data originale, "Status:", "Tags: …"), il titolo "# …" e la sezione "# References".
+- Mantieni il riquadro "> [!summary] In breve" (aggiornalo se lo scopo cambia), l'ordine delle righe (Cos'è → Quando serve → Come si fa → Scorciatoie → Limite → Non funziona) e lo stile della nota.`;
 
 const MERGE_SYSTEM = `Unisci un nuovo contenuto a una nota esistente del vault Obsidian dell'utente.
 Restituisci SOLO il testo completo della nota unita: niente blocchi di codice intorno, niente commenti.
@@ -244,7 +265,10 @@ function parseItems(raw) {
   return data
     .filter((x) => x && typeof x === 'object')
     .map((x) => ({
-      azione: ['nuova', 'unisci', 'salta'].includes(lc(x.azione)) ? lc(x.azione) : 'nuova',
+      azione: ['nuova', 'unisci', 'salta', 'attendi', 'correggi', 'elimina'].includes(lc(x.azione)) ? lc(x.azione) : 'nuova',
+      sospeso: Number.isInteger(Number(x.sospeso)) ? Number(x.sospeso) : 0,
+      sostituitaDa: String(x.sostituita_da || '').trim(),
+      motivo: String(x.motivo || '').trim(),
       tipo: lc(x.tipo) === 'script' ? 'script' : 'nota',
       materia: String(x.materia || '').trim(),
       categoria: String(x.categoria || '').trim().replace(/^\d{2}\s+/, ''),
@@ -279,7 +303,9 @@ class Archivist {
   /**
    * @param {{ getConfig: () => object, getVault: () => import('./obsidian').Vault, oneShot: import('./llm').OneShot, backupRoot: string }} deps
    */
-  constructor({ getConfig, getVault, oneShot, backupRoot }) {
+  constructor({ getConfig, getVault, oneShot, backupRoot, stateFile }) {
+    this.stateFile = stateFile; // problemi in sospeso (sopravvivono al riavvio)
+    this.pending = loadPending(stateFile);
     this.getConfig = getConfig;
     this.getVault = getVault;
     this.oneShot = oneShot;
@@ -474,7 +500,9 @@ class Archivist {
     const answer = normalizeNewlines(job.answer || '').trim();
     const images = Array.isArray(job.images) ? job.images : [];
     const result = { ok: true, opId: op.id, items: [], rough: false, skipped: false };
-    if (job.kind !== 'nota' && SMALL_TALK.test(question)) {
+    // Con un problema in sospeso anche "grazie"/"ok" può voler dire "risolto": in quel caso decide il classificatore.
+    this.pending = this.pending.filter((p) => Date.now() - p.at < PENDING_TTL);
+    if (job.kind !== 'nota' && SMALL_TALK.test(question) && !this.pending.length) {
       result.skipped = true;
       return this.finish(op, result);
     }
@@ -491,7 +519,7 @@ class Archivist {
       try {
         const raw = await this.oneShot.run({
           system: CLASSIFY_SYSTEM,
-          prompt: classifyPrompt({ tree, related, question, answer: answerForModel, previous: job.previous, images, scripts, kind: job.kind }),
+          prompt: classifyPrompt({ tree, related, question, answer: answerForModel, previous: job.previous, images, scripts, kind: job.kind, pending: this.pending }),
           model: cfg.classifyModel || 'haiku',
           effort: 'low',
         });
@@ -505,9 +533,14 @@ class Archivist {
         return this.finish(op, result);
       }
 
-      const toWrite = items.filter((i) => i.azione !== 'salta');
+      // Problemi non ancora risolti: nessuna nota, restano in sospeso finché non arriva la conferma.
+      for (const item of items.filter((i) => i.azione === 'attendi')) this.holdProblem(item.sospeso, question, answer);
+      // "salta" su un problema in sospeso: è risolto ma la soluzione è già nel vault.
+      for (const item of items.filter((i) => i.azione === 'salta' && i.sospeso)) this.releaseProblem(item.sospeso);
+      result.waiting = items.some((i) => i.azione === 'attendi');
+      const toWrite = items.filter((i) => i.azione !== 'salta' && i.azione !== 'attendi');
       if (!toWrite.length) {
-        result.skipped = true;
+        result.skipped = !result.waiting;
         return this.finish(op, result);
       }
 
@@ -523,10 +556,15 @@ class Archivist {
           continue;
         }
         try {
-          const done = await this.writeItem(op, now, item, tree, names, attachments, cfg);
+          const done = await this.writeItem(op, now, item, tree, names, attachments, cfg, question, answer);
+          if (!done) {
+            if (item.sospeso) this.releaseProblem(item.sospeso); // risolto, ma non c'era niente di nuovo da scrivere
+            continue; // il revisore ha deciso di non scrivere
+          }
+          if (item.sospeso) this.releaseProblem(item.sospeso); // problema risolto e archiviato
           result.items.push(done);
           log.push(...done.log);
-          await this.updateHubs(op, now, item, done, log).catch(() => {}); // scorciatoie e strumenti: mai bloccanti
+          if (done.action !== 'eliminata') await this.updateHubs(op, now, item, done, log).catch(() => {}); // mai bloccanti
         } catch (err) {
           const body = await this.withAttachments(op, now, item.contenuto || answer, item.titolo || 'Da sistemare', attachments).catch(() => item.contenuto || answer);
           await this.addRough(op, now, question, body, `Scrittura non riuscita: ${err.message}`);
@@ -578,11 +616,37 @@ class Archivist {
     return map;
   }
 
-  async writeItem(op, now, item, tree, names, attachments, cfg) {
+  async writeItem(op, now, item, tree, names, attachments, cfg, question = '', answer = '') {
     const log = [];
     if (item.tipo === 'script') {
       item.materia = SCRIPT_SUBJECT;
       item.categoria = SCRIPT_CATEGORY;
+    }
+
+    if (item.azione === 'correggi') {
+      const target = await this.resolveExisting(item, tree);
+      if (!target) throw new Error('Nota da correggere non trovata.');
+      return this.mergeInto(op, now, item, target, attachments, cfg, 'correggi');
+    }
+    if (item.azione === 'elimina') {
+      const target = await this.resolveExisting(item, tree);
+      if (!target) throw new Error('Nota da eliminare non trovata.');
+      target.text = await this.readText(target.rel); // il revisore deve leggere cosa sta per sparire
+      const verdict = await this.review(cfg, item, [target], question, answer);
+      if (verdict.decisione !== 'conferma') return null; // nel dubbio non si elimina
+      return this.deleteNote(op, item, target, tree);
+    }
+    // Nota nuova con una nota simile già nel vault: decide il modello principale (solo in quel caso).
+    if (item.azione === 'nuova' && item.tipo !== 'script') {
+      const similar = await this.similarNotes(item, tree);
+      if (similar.length) {
+        const verdict = await this.review(cfg, item, similar, question, answer);
+        if (verdict.decisione === 'salta') return null;
+        if (verdict.decisione === 'unisci') {
+          item.azione = 'unisci';
+          item.notaEsistente = toPosix(verdict.nota_esistente) || similar[0].rel;
+        }
+      }
     }
 
     // Unione: la nota esiste davvero?
@@ -641,14 +705,20 @@ class Archivist {
     return byName ? findNoteByTitle(tree, byName) : null;
   }
 
-  async mergeInto(op, now, item, target, attachments, cfg) {
+  async mergeInto(op, now, item, target, attachments, cfg, mode = 'unisci') {
+    const fix = mode === 'correggi';
     const original = await this.readText(target.rel);
     const addition = await this.withAttachments(op, now, item.contenuto, target.title, attachments);
+    const heading = fix ? `## Correzione ${now.date}` : `## Aggiunta ${now.date}`;
+    const action = fix ? 'corretta' : 'aggiornata';
+    const logLine = fix ? `🛠️ corretta [[${target.title}]]` : `✏️ aggiornata [[${target.title}]]`;
     let merged = null;
     try {
       const raw = await this.oneShot.run({
-        system: MERGE_SYSTEM,
-        prompt: `<nota_attuale>\n${original}\n</nota_attuale>\n\n<nuovo_contenuto>\n${addition}\n</nuovo_contenuto>`,
+        system: fix ? CORRECT_SYSTEM : MERGE_SYSTEM,
+        prompt: fix
+          ? `<nota_attuale>\n${original}\n</nota_attuale>\n\n<correzione>\n${item.motivo ? `Cosa era sbagliato: ${item.motivo}\n` : ''}${addition}\n</correzione>`
+          : `<nota_attuale>\n${original}\n</nota_attuale>\n\n<nuovo_contenuto>\n${addition}\n</nuovo_contenuto>`,
         model: cfg.mergeModel || 'main',
         effort: cfg.effort || 'medium',
       });
@@ -661,31 +731,135 @@ class Archivist {
     const current = await this.readText(target.rel);
     if (current !== original) {
       // Modificata mentre il modello univa: tengo le modifiche e aggiungo in fondo.
-      await this.writeText(op, target.rel, insertBeforeReferences(current, [`## Aggiunta ${now.date}`, '', addition]));
-      return { action: 'aggiornata', materia: target.subject, categoria: target.category, titolo: target.title, rel: target.rel, log: [`✏️ aggiornata [[${target.title}]]`] };
+      await this.writeText(op, target.rel, insertBeforeReferences(current, [heading, '', addition]));
+      return { action, materia: target.subject, categoria: target.category, titolo: target.title, rel: target.rel, log: [logLine] };
     }
     const dateLine = original.split('\n').find((l) => l.trim());
     const ok =
       merged &&
       merged.split('\n').some((l) => l.trim() === `# ${target.title}`) &&
       /^# References\s*$/m.test(merged) &&
-      merged.length >= original.length * 0.7 &&
+      merged.length >= original.length * (fix ? 0.4 : 0.7) && // una correzione può accorciare la nota
       (!dateLine || merged.includes(dateLine.trim()));
     if (!ok) {
       // Controlli non superati: niente sovrascrittura, si aggiunge in fondo.
-      merged = insertBeforeReferences(original, [`## Aggiunta ${now.date}`, '', addition]);
+      merged = insertBeforeReferences(original, [heading, '', addition]);
     }
     await this.writeText(op, target.rel, merged);
     // Il link nell'indice c'è già di solito; se manca lo si aggiunge.
     if (target.subject && target.category) await this.addToIndex(op, now, target.subject, target.category, target.title, '', true);
+    return { action, materia: target.subject, categoria: target.category, titolo: target.title, rel: target.rel, log: [logLine] };
+  }
+
+  // ---------------------------------------- revisione, eliminazione, sospesi
+
+  /** Note simili a una nota nuova, trovate in locale (nessuna chiamata al modello). */
+  async similarNotes(item, tree) {
+    const vault = this.getVault();
+    const want = new Set(keywords(item.titolo));
+    const found = new Map();
+    if (want.size >= 2) {
+      for (const s of tree) {
+        for (const c of s.categories) {
+          for (const t of c.notes) {
+            const have = keywords(t);
+            const shared = have.filter((w) => want.has(w)).length;
+            if (shared >= 2 && shared >= Math.min(want.size, have.length) * 0.5) {
+              found.set(`${DIRS.atomic}/${s.name}/${c.folder}/${t}.md`, shared);
+            }
+          }
+        }
+      }
+    }
+    const rel = await vault
+      .relevant(`${item.titolo}\n${item.contenuto.slice(0, 600)}`, 2, [DIRS.rough, DIRS.template, DIRS.source, DIRS.tags, DIRS.indexes])
+      .catch(() => []);
+    // Revisione solo se il contenuto è molto simile E il titolo ha almeno una parola in comune:
+    // ogni revisione è una chiamata in più al modello principale.
+    for (const n of rel) {
+      if (n.score >= SIMILAR_SCORE && n.rel.startsWith(`${DIRS.atomic}/`) && keywords(n.title).some((w) => want.has(w))) found.set(n.rel, n.score);
+    }
+    const out = [];
+    for (const r of [...found.keys()].slice(0, 2)) {
+      try {
+        const parts = r.split('/');
+        out.push({ rel: r, title: path.posix.basename(r, '.md'), subject: parts[1], category: categoryParts(parts[2] || '').name, text: await this.readText(r) });
+      } catch {
+        // sparita nel frattempo
+      }
+    }
+    return out;
+  }
+
+  /** Il modello principale decide su una nota nuova "a rischio doppione" o su un'eliminazione. */
+  async review(cfg, item, notes, question, answer) {
+    const fallback = { decisione: item.azione === 'elimina' ? 'annulla' : 'conferma' };
+    try {
+      const raw = await this.oneShot.run({
+        system: REVIEW_SYSTEM,
+        prompt:
+          `<azione_proposta>\n${JSON.stringify({ azione: item.azione, titolo: item.titolo, materia: item.materia, categoria: item.categoria, motivo: item.motivo, sostituita_da: item.sostituitaDa, contenuto: item.contenuto.slice(0, 2000) })}\n</azione_proposta>\n\n` +
+          `<note_esistenti>\n${notes.map((n) => `--- ${n.rel}\n${String(n.text || '').slice(0, 2500)}`).join('\n\n')}\n</note_esistenti>\n\n` +
+          `<scambio>\nDomanda: ${question.slice(0, 600)}\nRisposta (inizio): ${answer.slice(0, 1200)}\n</scambio>`,
+        model: cfg.mergeModel || 'main',
+        effort: 'low',
+      });
+      const t = normalizeNewlines(raw);
+      const v = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1));
+      return ['conferma', 'unisci', 'salta', 'annulla'].includes(v.decisione) ? v : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  /** Elimina davvero una nota sbagliata o doppia e sistema i link che la richiamavano. */
+  async deleteNote(op, item, target, tree) {
+    let replacement = item.sostituitaDa ? findNoteByTitle(tree, item.sostituitaDa) : null;
+    if (replacement && lc(replacement.title) === lc(target.title)) replacement = null;
+    const vault = this.getVault();
+    await vault.ensureIndexed().catch(() => {});
+    const needle = lc(`[[${target.title}`);
+    for (const n of [...vault.notes.values()]) {
+      if (n.rel === target.rel || !n.text.toLowerCase().includes(needle)) continue;
+      const text = await this.readText(n.rel);
+      const next = relinkText(text, target.title, replacement ? replacement.title : null);
+      if (next !== text) await this.writeText(op, n.rel, next);
+    }
+    // Cancellata dal disco (niente backup); il contenuto resta in memoria per ↩ Annulla.
+    const full = this.full(target.rel);
+    const before = await fsp.readFile(full);
+    op.journal.push({ rel: target.rel, before, deleted: true });
+    await fsp.unlink(full);
+    for (const s of tree) for (const c of s.categories) c.notes = c.notes.filter((t) => lc(t) !== lc(target.title));
+    const by = replacement ? ` (sostituita da [[${replacement.title}]])` : '';
     return {
-      action: 'aggiornata',
+      action: 'eliminata',
       materia: target.subject,
       categoria: target.category,
       titolo: target.title,
-      rel: target.rel,
-      log: [`✏️ aggiornata [[${target.title}]]`],
+      rel: null,
+      log: [`🗑️ eliminata «${target.title}»${by}`],
     };
+  }
+
+  holdProblem(id, question, answer) {
+    const entry = this.pending.find((p) => p.id === id);
+    if (entry) {
+      entry.question = `${entry.question}\n→ ${question}`.slice(-1500);
+      entry.answer = answer.slice(0, 2500);
+      entry.at = Date.now();
+    } else {
+      const next = this.pending.reduce((m, p) => Math.max(m, p.id), 0) + 1;
+      this.pending.push({ id: next, question: question.slice(0, 1500), answer: answer.slice(0, 2500), at: Date.now() });
+      this.pending = this.pending.slice(-5);
+    }
+    savePending(this.stateFile, this.pending);
+  }
+
+  releaseProblem(id) {
+    const before = this.pending.length;
+    this.pending = this.pending.filter((p) => p.id !== id);
+    if (this.pending.length !== before) savePending(this.stateFile, this.pending);
   }
 
   /** Sostituisce i segnaposto di immagini e script con i file salvati nel vault. */
@@ -950,6 +1124,57 @@ class Archivist {
 
 // ------------------------------------------------------------ funzioni libere
 
+function loadPending(file) {
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return Array.isArray(data) ? data.filter((p) => p && p.id && Date.now() - p.at < PENDING_TTL) : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePending(file, pending) {
+  if (!file) return;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(pending), 'utf8');
+  } catch {
+    // non critico
+  }
+}
+
+/**
+ * Dopo l'eliminazione di una nota: i link a lei passano alla nota che la sostituisce
+ * (senza doppioni negli elenchi); senza sostituto le voci di elenco e le righe delle
+ * tabelle che la citano spariscono e gli altri link diventano testo.
+ */
+function relinkText(text, oldTitle, repl) {
+  const esc = oldTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const linkRe = () => new RegExp(`(!?)\\[\\[${esc}(#[^\\]|]*)?(\\\\?\\|[^\\]]*)?\\]\\]`, 'gi');
+  const onlyLink = new RegExp(`^\\s*- \\[\\[${esc}(\\\\?\\|[^\\]]*)?\\]\\]\\s*$`, 'i');
+  const lines = text.split('\n');
+  // Righe già presenti (senza il vecchio link): la riga riscritta non deve duplicarle.
+  const seen = new Set(lines.filter((l) => !linkRe().test(l)).map((l) => l.trim()));
+  const out = [];
+  for (const line of lines) {
+    if (!linkRe().test(line)) {
+      out.push(line);
+      continue;
+    }
+    if (!repl && (onlyLink.test(line) || line.trim().startsWith('|'))) continue;
+    const next = line.replace(linkRe(), (m, bang, _sec, alias) => {
+      if (repl) return `${bang}[[${repl}${alias || ''}]]`;
+      if (bang) return '';
+      return alias ? alias.replace(/^\\?\|/, '') : oldTitle;
+    });
+    const key = next.trim();
+    if ((key.startsWith('- [[') || key.startsWith('|')) && seen.has(key)) continue; // niente doppioni
+    seen.add(key);
+    out.push(next);
+  }
+  return out.join('\n');
+}
+
 async function listNotes(dir) {
   const out = [];
   const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
@@ -1027,7 +1252,7 @@ function demoteHeadings(text) {
     .join('\n');
 }
 
-function classifyPrompt({ tree, related, question, answer, previous, images, scripts, kind }) {
+function classifyPrompt({ tree, related, question, answer, previous, images, scripts, kind, pending = [] }) {
   // Con un vault grande non si mandano tutti i titoli (costano a ogni archiviazione):
   // solo quelli delle categorie toccate dalle note simili o nominate nella domanda.
   const total = tree.reduce((n, s) => n + s.categories.reduce((m, c) => m + c.notes.length, 0), 0);
@@ -1057,6 +1282,13 @@ function classifyPrompt({ tree, related, question, answer, previous, images, scr
   if (previous && previous.question) {
     parts.push(
       `<scambio_precedente>\nDomanda: ${previous.question}\nRisposta (inizio): ${String(previous.answer || '').slice(0, 1200)}\n</scambio_precedente>`
+    );
+  }
+  if (pending.length) {
+    parts.push(
+      `<problemi_in_sospeso>\n${pending
+        .map((p) => `[${p.id}] Domanda: ${p.question}\nRisposta proposta (non ancora confermata): ${p.answer.slice(0, 1200)}`)
+        .join('\n\n')}\n</problemi_in_sospeso>`
     );
   }
   if (kind === 'nota') {

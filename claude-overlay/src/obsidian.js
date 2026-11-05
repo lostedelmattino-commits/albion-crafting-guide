@@ -255,7 +255,7 @@ class Vault {
       if (score >= 6) scored.push({ n, score });
     }
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit).map(({ n }) => ({ rel: n.rel, title: n.title, text: n.text }));
+    return scored.slice(0, limit).map(({ n, score }) => ({ rel: n.rel, title: n.title, text: n.text, score }));
   }
 
   /** Tutti i nomi di nota (senza .md, minuscoli): Obsidian collega le note per nome. */
@@ -367,4 +367,4 @@ function keywords(text) {
   return [...new Set(words)].slice(0, 15);
 }
 
-module.exports = { Vault, stripFrontmatter };
+module.exports = { Vault, stripFrontmatter, keywords };
