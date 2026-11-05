@@ -1,0 +1,34 @@
+{
+  "name": "claude-overlay",
+  "version": "0.1.0",
+  "description": "Overlay flottante e semitrasparente per Windows: chatta con Claude e richiama le note di Obsidian senza lasciare quello che stai facendo.",
+  "main": "src/main.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable nsis"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.4.0"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "dev.claude-overlay",
+    "productName": "Claude Overlay",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "src/assets/icon.ico"
+    }
+  }
+}

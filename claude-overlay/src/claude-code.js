@@ -1,0 +1,381 @@
+'use strict';
+// Collegamento tramite Claude Code (la CLI ufficiale `claude`): usa l'account con cui
+// hai fatto l'accesso a Claude Code, quindi il tuo abbonamento Pro/Max, senza chiave API.
+// Un processo `claude -p` in modalità stream-json resta aperto per la conversazione:
+// i messaggi entrano da stdin come righe JSON e il testo esce in streaming da stdout.
+
+const { spawn, execFileSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const readline = require('readline');
+
+const IDLE_MS = 10 * 60 * 1000; // chiude il processo dopo 10 minuti di inattività
+
+const BASE_SYSTEM = [
+  "Stai rispondendo dentro un piccolo overlay flottante sul desktop dell'utente, usato per domande veloci e per prendere appunti.",
+  "Rispondi nella lingua dell'utente. Vai dritto al punto: prima la risposta, poi eventuali dettagli.",
+  'Usa Markdown leggero (elenchi, grassetto, blocchi di codice) solo quando aiuta la lettura in uno spazio stretto.',
+  "Se l'utente allega una nota di Obsidian, usala come contesto principale.",
+].join('\n');
+
+const NO_FILES = 'Non hai accesso ai file del computer: se servono informazioni aggiornate puoi cercare sul web, quando lo strumento è disponibile.';
+
+// Regole per modificare il vault direttamente dalla chat (stesse dell'archiviazione automatica).
+const VAULT_RULES = (vault) => `Hai accesso in lettura e scrittura al vault Obsidian dell'utente: ${vault}
+Quando l'utente ti chiede di sistemare, unire, correggere o riordinare note, FALLO DIRETTAMENTE sui file con gli strumenti (Read, Edit, Write, Glob, Grep): non chiedere conferme e non incollare righe da sostituire. Alla fine scrivi in una o due righe cosa hai cambiato.
+Regole del vault (Zettelkasten):
+- Struttura: 1 - Rough Notes (appunti grezzi), 2 - Source Material, 3 - Tags ({Materia}.md e Strumenti/{Strumento}.md), 4 - Indexes ({Materia} - {Categoria}.md, {Materia} - Scorciatoie.md, Come usare questo vault.md), 5 - Template, 6 - Atomic Notes/{Materia}/{NN} {Categoria}/{Titolo}.md, Images.
+- Nota atomica: riga vuota iniziale, data "YYYY-MM-DD HH:mm", "Status:", "Tags: [[{Materia} - {Categoria}]]" (+ " [[{Materia} - Scorciatoie]]" se ha scorciatoie), "# {Titolo}" uguale al nome del file, riquadro "> [!summary] In breve", tabella "| Vuoi… | Fai così |" con righe nell'ordine Cos'è → Quando serve → Come si fa → Scorciatoie → Limite → Non funziona, poi "# References" con [[{Materia} - {Categoria}]]. Niente frontmatter YAML.
+- Pagina scorciatoie: tabella "| Tasti | Cosa fa | Nota |", una riga per coppia tasti + nota, nessun doppione.
+- Indici: riga in corsivo con gli argomenti ed elenco "- [[Titolo]]" di tutte le note della categoria. Pagine strumento: elenco sotto "## Note che lo usano".
+- Titoli orientati all'uso (verbo + scopo + (strumento)), unici, senza \\ / : * ? " < > | # ^ [ ]. Se rinomini una nota, aggiorna TUTTI i link [[...]] che la richiamano.
+- Un link con alias in una cella di tabella si scrive [[nota\\|alias]].
+- Non toccare mai la cartella .obsidian e non lavorare fuori dal vault.
+- Non puoi cancellare file: per un doppione, unisci il contenuto nella nota giusta, sposta i link su quella e dillo nella risposta (l'archiviazione automatica eliminerà il doppione).`;
+
+/** Il vault è modificabile dalla chat? (solo abbonamento, con un vault impostato e l'opzione attiva) */
+function canEditVault(cfg) {
+  return Boolean(cfg.chatCanEdit && cfg.vaultPath);
+}
+
+/** Trova l'eseguibile di Claude Code. */
+const foundClaude = new Map();
+function findClaude(custom) {
+  const key = custom || '';
+  const hit = foundClaude.get(key);
+  if (hit && fileExists(hit)) return hit;
+  const found = locateClaude(custom);
+  if (found) foundClaude.set(key, found);
+  return found;
+}
+
+function locateClaude(custom) {
+  // Un percorso scelto a mano vale da solo: se è sbagliato è meglio dirlo che usarne un altro.
+  if (custom) return fileExists(custom) ? custom : null;
+  const candidates = [];
+  const home = os.homedir();
+  if (process.platform === 'win32') {
+    try {
+      const out = execFileSync('where', ['claude'], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+      candidates.push(...out.split(/\r?\n/).filter((p) => /\.(exe|cmd|bat)$/i.test(p)).sort(byExe));
+    } catch {
+      // `where` non trova nulla: si provano i percorsi standard
+    }
+    candidates.push(path.join(home, '.local', 'bin', 'claude.exe'));
+    if (process.env.APPDATA) candidates.push(path.join(process.env.APPDATA, 'npm', 'claude.cmd'));
+  } else {
+    try {
+      candidates.push(execFileSync('which', ['claude'], { encoding: 'utf8', timeout: 5000 }).trim());
+    } catch {
+      // non nel PATH
+    }
+    candidates.push(
+      path.join(home, '.local', 'bin', 'claude'),
+      path.join(home, '.claude', 'local', 'claude'),
+      '/opt/homebrew/bin/claude',
+      '/usr/local/bin/claude'
+    );
+  }
+  return candidates.find((p) => p && fileExists(p)) || null;
+}
+
+function byExe(a, b) {
+  return Number(/\.exe$/i.test(b)) - Number(/\.exe$/i.test(a));
+}
+
+function fileExists(p) {
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** Avvia l'eseguibile; i file .cmd di npm su Windows richiedono la shell. */
+function launch(exe, args, options) {
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(exe)) {
+    const quote = (a) => (a === '' ? '""' : /[\s&()^|<>"%!]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a);
+    return spawn(`"${exe}"`, args.map(quote), { ...options, shell: true });
+  }
+  return spawn(exe, args, options);
+}
+
+function killTree(child) {
+  if (!child || child.exitCode !== null) return;
+  if (process.platform === 'win32') {
+    // Con la shell, kill() chiuderebbe solo cmd.exe: taskkill /T chiude anche Claude Code.
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => {});
+  } else {
+    child.kill('SIGTERM');
+  }
+}
+
+/** Ambiente per Claude Code: senza chiavi API, così usa l'accesso con l'abbonamento. */
+function subscriptionEnv() {
+  const env = { ...process.env };
+  for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ELECTRON_RUN_AS_NODE', 'CLAUDECODE']) delete env[k];
+  return env;
+}
+
+/** Controlla che Claude Code sia installato (non verifica l'accesso: quello emerge alla prima domanda). */
+function checkClaudeCode(custom) {
+  const exe = findClaude(custom);
+  if (!exe) {
+    return Promise.resolve({
+      ok: false,
+      error: custom ? `Nessun file in ${custom}.` : 'Claude Code non trovato su questo PC.',
+    });
+  }
+  return new Promise((resolve) => {
+    let out = '';
+    const child = launch(exe, ['--version'], { env: subscriptionEnv(), windowsHide: true });
+    const timer = setTimeout(() => {
+      killTree(child);
+      resolve({ ok: false, path: exe, error: 'Claude Code non risponde.' });
+    }, 15000);
+    child.stdout.on('data', (d) => (out += d));
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({ ok: false, path: exe, error: err.message });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const version = out.trim().split('\n')[0].replace(/\s*\(Claude Code\)\s*$/i, '');
+      if (code === 0) resolve({ ok: true, path: exe, version });
+      else resolve({ ok: false, path: exe, error: `Claude Code è uscito con codice ${code}.` });
+    });
+  });
+}
+
+class ClaudeCodeChat {
+  /**
+   * @param {() => object} getConfig
+   * @param {string} workDir cartella vuota usata come directory di lavoro (niente CLAUDE.md di progetto)
+   */
+  constructor(getConfig, workDir) {
+    this.getConfig = getConfig;
+    this.workDir = workDir;
+    this.child = null;
+    this.signature = '';
+    this.sessionId = null;
+    this.pending = null;
+    this.stderr = '';
+    this.rateLimit = null;
+    this.idleTimer = null;
+  }
+
+  argsFor(cfg) {
+    fs.mkdirSync(this.workDir, { recursive: true });
+    const systemFile = path.join(this.workDir, 'system-prompt.md');
+    const edit = canEditVault(cfg);
+    const base = `${BASE_SYSTEM}\n${edit ? VAULT_RULES(cfg.vaultPath) : NO_FILES}`;
+    const system = cfg.systemPrompt ? `${base}\n\n${cfg.systemPrompt}` : base;
+    fs.writeFileSync(systemFile, system, 'utf8');
+    const args = [
+      '-p',
+      '--input-format', 'stream-json',
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--include-partial-messages',
+      '--system-prompt-file', systemFile,
+      '--strict-mcp-config',
+      '--disable-slash-commands',
+    ];
+    // Ricerca web (facoltativa) e, se attivo, lettura/modifica dei file del vault.
+    // Mai comandi (niente Bash/PowerShell): i file si possono solo leggere e modificare.
+    const list = [...(cfg.webSearch ? ['WebSearch', 'WebFetch'] : []), ...(edit ? ['Read', 'Edit', 'Write', 'Glob', 'Grep'] : [])];
+    const tools = list.join(',');
+    args.push('--tools', tools);
+    if (tools) args.push('--allowedTools', tools);
+    if (edit) args.push('--add-dir', cfg.vaultPath, '--permission-mode', 'acceptEdits');
+    if (cfg.ccModel && cfg.ccModel !== 'default') args.push('--model', cfg.ccModel);
+    if (cfg.effort) args.push('--effort', cfg.effort);
+    return args;
+  }
+
+  /** Avvia il processo in anticipo, così la prima risposta arriva prima. */
+  warm() {
+    if (this.pending) return;
+    try {
+      this.ensureProcess();
+    } catch {
+      // l'errore verrà mostrato al primo invio
+    }
+  }
+
+  ensureProcess() {
+    const cfg = this.getConfig();
+    const signature = JSON.stringify([cfg.claudePath, cfg.ccModel, cfg.effort, cfg.webSearch, cfg.systemPrompt, canEditVault(cfg), cfg.vaultPath]);
+    if (this.child && this.signature !== signature) this.stop(); // impostazioni cambiate: riparte riprendendo la conversazione
+    if (this.child) return;
+    // Claude Code riusa le istruzioni registrate all'inizio della conversazione: se cambiano, ne serve una nuova.
+    const promptKey = JSON.stringify([cfg.systemPrompt, canEditVault(cfg), cfg.vaultPath]);
+    if (this.promptUsed !== undefined && this.promptUsed !== promptKey) this.freshSession();
+    this.promptUsed = promptKey;
+
+    const exe = findClaude(cfg.claudePath);
+    if (!exe) throw new Error(NOT_FOUND);
+    const args = this.argsFor(cfg);
+    this.resuming = Boolean(this.sessionId);
+    if (this.sessionId) args.push('--resume', this.sessionId);
+
+    const child = launch(exe, args, {
+      cwd: this.workDir,
+      env: subscriptionEnv(),
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    this.child = child;
+    this.signature = signature;
+    this.stderr = '';
+
+    readline.createInterface({ input: child.stdout }).on('line', (line) => this.onLine(child, line));
+    child.stderr.on('data', (d) => {
+      this.stderr = (this.stderr + d).slice(-4000);
+    });
+    child.stdin.on('error', () => {}); // processo già chiuso: gestito in 'close'
+    child.on('error', (err) => this.onExit(child, err.code === 'ENOENT' ? NOT_FOUND : err.message));
+    child.on('close', (code) => this.onExit(child, `Claude Code si è chiuso (codice ${code}). ${this.stderr.trim()}`.trim()));
+    this.touch();
+  }
+
+  onLine(child, line) {
+    if (child !== this.child) return;
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      return; // righe non JSON (log): ignorate
+    }
+    const p = this.pending;
+
+    if (msg.type === 'rate_limit_event') {
+      this.rateLimit = msg.rate_limit_info || null;
+      return;
+    }
+    if (!p) return;
+
+    if (msg.type === 'stream_event' && msg.event && !msg.parent_tool_use_id) {
+      const ev = msg.event;
+      if (ev.type === 'message_start' && p.text) p.needSep = true;
+      if (ev.type === 'content_block_start' && ev.content_block) {
+        const t = ev.content_block.type;
+        if (t === 'server_tool_use' || t === 'tool_use') p.onStatus && p.onStatus('Cerco sul web…');
+      }
+      if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
+        let delta = ev.delta.text;
+        if (p.needSep) {
+          delta = `\n\n${delta}`;
+          p.needSep = false;
+        }
+        p.text += delta;
+        p.onText(delta);
+      }
+      return;
+    }
+
+    if (msg.type === 'result') {
+      this.pending = null;
+      this.touch();
+      if (msg.is_error || msg.subtype !== 'success') {
+        if (this.retryFresh(p)) return;
+        const detail = msg.result || (Array.isArray(msg.errors) ? msg.errors.join('\n') : '') || msg.subtype;
+        p.resolve({ ok: false, error: friendlyError(detail, this.rateLimit) });
+      } else {
+        // La sessione esiste davvero solo dopo una risposta riuscita: solo allora la si può riprendere.
+        if (msg.session_id) this.sessionId = msg.session_id;
+        this.resuming = false;
+        p.resolve({ ok: true, text: p.text || msg.result || '', stopReason: msg.stop_reason });
+      }
+    }
+  }
+
+  /** Se la ripresa di una conversazione fallisce (es. sessione non trovata), riprova da capo una volta. */
+  retryFresh(p) {
+    if (!this.resuming || p.retried || p.text) return false;
+    this.stop();
+    this.freshSession();
+    this.resuming = false;
+    this.send(p.content, p.onText, p.onStatus, true).then(p.resolve);
+    return true;
+  }
+
+  onExit(child, reason) {
+    if (child !== this.child) return;
+    this.child = null;
+    clearTimeout(this.idleTimer);
+    const p = this.pending;
+    this.pending = null;
+    if (p && this.retryFresh(p)) return;
+    if (p) p.resolve({ ok: false, error: friendlyError(reason, this.rateLimit) });
+  }
+
+  touch() {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => {
+      if (!this.pending) this.stop();
+    }, IDLE_MS);
+  }
+
+  stop() {
+    const child = this.child;
+    this.child = null;
+    clearTimeout(this.idleTimer);
+    killTree(child);
+  }
+
+  abort() {
+    const p = this.pending;
+    this.pending = null;
+    this.stop(); // la conversazione riprende con --resume al prossimo messaggio
+    if (p) p.resolve({ ok: false, aborted: true, error: 'Interrotto.' });
+  }
+
+  reset() {
+    this.abort();
+    this.sessionId = null;
+  }
+
+  freshSession() {
+    this.sessionId = null;
+    if (this.onFresh) this.onFresh();
+  }
+
+  dispose() {
+    this.abort();
+  }
+
+  send(content, onText, onStatus, retried = false) {
+    if (this.pending) this.abort();
+    try {
+      this.ensureProcess();
+    } catch (err) {
+      return Promise.resolve({ ok: false, error: err.message });
+    }
+    return new Promise((resolve) => {
+      this.pending = { resolve, onText, onStatus, content, retried, text: '', needSep: false };
+      const line = JSON.stringify({ type: 'user', message: { role: 'user', content } });
+      this.child.stdin.write(`${line}\n`);
+    });
+  }
+}
+
+const NOT_FOUND =
+  'Claude Code non trovato. Installalo (vedi README: in PowerShell `irm https://claude.ai/install.ps1 | iex`), ' +
+  'poi apri un terminale, esegui `claude` e accedi con il tuo account Claude. ' +
+  'Se è installato in un percorso diverso, indicalo nelle impostazioni (⚙).';
+
+function friendlyError(detail, rateLimit) {
+  let msg = String(detail || 'Errore sconosciuto.').trim();
+  if (rateLimit && rateLimit.status === 'rejected') {
+    const when = rateLimit.resetsAt ? new Date(rateLimit.resetsAt * 1000).toLocaleString('it-IT') : '';
+    msg = `Hai raggiunto il limite di utilizzo del tuo piano${when ? ` (si azzera il ${when})` : ''}.\n\n${msg}`;
+  }
+  return (
+    `${msg}\n\nSe non hai ancora fatto l'accesso: apri un terminale, esegui \`claude\` ` +
+    'e accedi con il tuo account Claude (Pro o Max).'
+  );
+}
+
+module.exports = { ClaudeCodeChat, checkClaudeCode, findClaude, launch, killTree, subscriptionEnv };
